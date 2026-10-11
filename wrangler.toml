@@ -1,0 +1,3 @@
+name = "soft-sunset-b004"
+main = "worker.js"
+compatibility_date = "2026-10-11"
