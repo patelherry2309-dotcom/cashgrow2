@@ -116,11 +116,70 @@ export default {
           }, 400);
         }
 
-        return json({
-          success: true,
-          message: "Payment verified successfully"
-        });
+        const auth = btoa(
+  `${env.RAZORPAY_KEY_ID}:${env.RAZORPAY_KEY_SECRET}`
+);
 
+const paymentResponse = await fetch(
+  `https://api.razorpay.com/v1/payments/${razorpay_payment_id}`,
+  {
+    method: "GET",
+    headers: {
+      Authorization: `Basic ${auth}`
+    }
+  }
+);
+
+if (!paymentResponse.ok) {
+  return json({
+    success: false,
+    message: "Payment details could not be verified"
+  }, 400);
+}
+
+const payment = await paymentResponse.json();
+
+if (payment.status !== "captured") {
+  return json({
+    success: false,
+    message: "Payment is not captured"
+  }, 400);
+}
+
+const product =
+  payment.amount === 59900
+    ? "Starter Bundle"
+    : payment.amount === 99900
+      ? "Pro Bundle"
+      : "Unknown";
+
+const existingPayment = await env.DB.prepare(
+  "SELECT id FROM payments WHERE razorpay_payment_id = ?"
+)
+  .bind(razorpay_payment_id)
+  .first();
+
+if (!existingPayment) {
+  await env.DB.prepare(`
+    INSERT INTO payments
+    (user_id, razorpay_order_id, razorpay_payment_id, product, amount, status)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `)
+    .bind(
+      null,
+      razorpay_order_id,
+      razorpay_payment_id,
+      product,
+      payment.amount,
+      payment.status
+    )
+    .run();
+}
+
+return json({
+  success: true,
+  message: "Payment verified and saved successfully"
+});
       } catch (error) {
         return json({
           success: false,
