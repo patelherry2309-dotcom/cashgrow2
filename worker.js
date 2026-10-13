@@ -179,13 +179,23 @@ export default {
         );
 
         if (!paymentResponse.ok) {
-          return json(
-            {
-              success: false,
-              message: "Payment details could not be verified"
-            },
-            500
-          );
+  const errorText = await paymentResponse.text();
+
+  console.log(
+    "Razorpay API error:",
+    paymentResponse.status,
+    errorText
+  );
+
+  return json(
+    {
+      success: false,
+      message: `Razorpay API error ${paymentResponse.status}`,
+      details: errorText
+    },
+    500
+  );
+}
         }
 
         const payment = await paymentResponse.json();
