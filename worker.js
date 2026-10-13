@@ -2,20 +2,29 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    // Create Razorpay Order
+    // =========================
+    // CREATE RAZORPAY ORDER
+    // =========================
     if (url.pathname === "/api/create-order" && request.method === "POST") {
       try {
         const body = await request.json();
+
         const product = body.product;
+        const name = body.name || "";
+        const phone = body.phone || "";
+        const email = body.email || "";
+        const referralCode = body.referral_code || "";
 
         const products = {
           starter: {
             name: "Starter Bundle",
-            amount: 59900
+            amount: 59900,
+            reward: 400
           },
           pro: {
             name: "Pro Bundle",
-            amount: 99900
+            amount: 99900,
+            reward: 800
           }
         };
 
@@ -48,23 +57,41 @@ export default {
         const data = await response.json();
 
         if (!response.ok) {
-          return json({
-            error: data.error?.description || "Razorpay order creation failed"
-          }, 500);
+          return json(
+            {
+              error:
+                data?.error?.description ||
+                "Razorpay order creation failed"
+            },
+            500
+          );
         }
 
         return json({
           order_id: data.id,
           amount: selected.amount,
-          name: selected.name
+          name: selected.name,
+          key_id: env.RAZORPAY_KEY_ID,
+          customer: {
+            name,
+            phone,
+            email,
+            referral_code: referralCode
+          }
         });
-
       } catch (error) {
-        return json({ error: "Server error" }, 500);
+        return json(
+          {
+            error: "Server error while creating order"
+          },
+          500
+        );
       }
     }
 
-    // Verify Razorpay Payment
+    // =========================
+    // VERIFY PAYMENT
+    // =========================
     if (url.pathname === "/api/verify" && request.method === "POST") {
       try {
         const body = await request.json();
@@ -72,7 +99,11 @@ export default {
         const {
           razorpay_order_id,
           razorpay_payment_id,
-          razorpay_signature
+          razorpay_signature,
+          name,
+          phone,
+          email,
+          referral_code
         } = body;
 
         if (
@@ -80,9 +111,18 @@ export default {
           !razorpay_payment_id ||
           !razorpay_signature
         ) {
-          return json({ success: false }, 400);
+          return json(
+            {
+              success: false,
+              message: "Payment details are missing"
+            },
+            400
+          );
         }
 
+        // -------------------------
+        // Verify Razorpay signature
+        // -------------------------
         const message =
           `${razorpay_order_id}|${razorpay_payment_id}`;
 
@@ -99,101 +139,280 @@ export default {
           ["sign"]
         );
 
-        const signatureBuffer = await crypto.subtle.sign(
-          "HMAC",
-          key,
-          encoder.encode(message)
-        );
+        const signatureBuffer =
+          await crypto.subtle.sign(
+            "HMAC",
+            key,
+            encoder.encode(message)
+          );
 
-        const signature = [...new Uint8Array(signatureBuffer)]
-          .map(b => b.toString(16).padStart(2, "0"))
-          .join("");
+        const generatedSignature =
+          [...new Uint8Array(signatureBuffer)]
+            .map(b => b.toString(16).padStart(2, "0"))
+            .join("");
 
-        if (signature !== razorpay_signature) {
-          return json({
-            success: false,
-            message: "Invalid payment signature"
-          }, 400);
+        if (generatedSignature !== razorpay_signature) {
+          return json(
+            {
+              success: false,
+              message: "Invalid payment signature"
+            },
+            400
+          );
         }
 
+        // -------------------------
+        // Get payment details
+        // -------------------------
         const auth = btoa(
-  `${env.RAZORPAY_KEY_ID}:${env.RAZORPAY_KEY_SECRET}`
-);
+          `${env.RAZORPAY_KEY_ID}:${env.RAZORPAY_KEY_SECRET}`
+        );
 
-const paymentResponse = await fetch(
-  `https://api.razorpay.com/v1/payments/${razorpay_payment_id}`,
-  {
-    method: "GET",
-    headers: {
-      Authorization: `Basic ${auth}`
-    }
-  }
-);
+        const paymentResponse = await fetch(
+          `https://api.razorpay.com/v1/payments/${razorpay_payment_id}`,
+          {
+            method: "GET",
+            headers: {
+              "Authorization": `Basic ${auth}`
+            }
+          }
+        );
 
-if (!paymentResponse.ok) {
-  return json({
-    success: false,
-    message: "Payment details could not be verified"
-  }, 400);
-}
+        if (!paymentResponse.ok) {
+          return json(
+            {
+              success: false,
+              message: "Payment details could not be verified"
+            },
+            500
+          );
+        }
 
-const payment = await paymentResponse.json();
+        const payment = await paymentResponse.json();
 
-if (payment.status !== "captured") {
-  return json({
-    success: false,
-    message: "Payment is not captured"
-  }, 400);
-}
+        if (payment.status !== "captured") {
+          return json(
+            {
+              success: false,
+              message: "Payment is not captured"
+            },
+            400
+          );
+        }
 
-const product =
-  payment.amount === 59900
-    ? "Starter Bundle"
-    : payment.amount === 99900
-      ? "Pro Bundle"
-      : "Unknown";
+        // -------------------------
+        // Detect product
+        // -------------------------
+        let product = "";
+        let rewardAmount = 0;
 
-const existingPayment = await env.DB.prepare(
-  "SELECT id FROM payments WHERE razorpay_payment_id = ?"
-)
-  .bind(razorpay_payment_id)
-  .first();
+        if (payment.amount === 59900) {
+          product = "starter";
+          rewardAmount = 400;
+        } else if (payment.amount === 99900) {
+          product = "pro";
+          rewardAmount = 800;
+        } else {
+          return json(
+            {
+              success: false,
+              message: "Invalid payment amount"
+            },
+            400
+          );
+        }
 
-if (!existingPayment) {
-  await env.DB.prepare(`
-    INSERT INTO payments
-    (user_id, razorpay_order_id, razorpay_payment_id, product, amount, status)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `)
-    .bind(
-      null,
-      razorpay_order_id,
-      razorpay_payment_id,
-      product,
-      payment.amount,
-      payment.status
-    )
-    .run();
-}
+        // -------------------------
+        // Prevent duplicate payment
+        // -------------------------
+        const existingPayment =
+          await env.DB.prepare(
+            `SELECT id
+             FROM payments
+             WHERE razorpay_payment_id = ?`
+          )
+            .bind(razorpay_payment_id)
+            .first();
 
-return json({
-  success: true,
-  message: "Payment verified and saved successfully"
-});
-      } catch (error) {
+        if (existingPayment) {
+          return json({
+            success: true,
+            message: "Payment already verified"
+          });
+        }
+
+        // -------------------------
+        // Save payment
+        // -------------------------
+        await env.DB.prepare(
+          `INSERT INTO payments
+          (
+            user_id,
+            razorpay_order_id,
+            razorpay_payment_id,
+            product,
+            amount,
+            status
+          )
+          VALUES (?, ?, ?, ?, ?, ?)`
+        )
+          .bind(
+            null,
+            razorpay_order_id,
+            razorpay_payment_id,
+            product,
+            payment.amount,
+            payment.status
+          )
+          .run();
+
+        // ==================================================
+        // REFERRAL SYSTEM
+        // ==================================================
+
+        let referralMessage = "";
+
+        if (referral_code) {
+          const referrer =
+            await env.DB.prepare(
+              `SELECT id, referral_code, wallet_balance
+               FROM users
+               WHERE referral_code = ?`
+            )
+              .bind(referral_code)
+              .first();
+
+          if (referrer) {
+            // Create a new user for the buyer
+            const newReferralCode =
+              "CG" +
+              Math.random()
+                .toString(36)
+                .substring(2, 8)
+                .toUpperCase();
+
+            const existingUser =
+              await env.DB.prepare(
+                `SELECT id
+                 FROM users
+                 WHERE email = ? OR phone = ?`
+              )
+                .bind(email || "", phone || "")
+                .first();
+
+            let referredUserId = null;
+
+            if (existingUser) {
+              referredUserId = existingUser.id;
+            } else {
+              const userResult =
+                await env.DB.prepare(
+                  `INSERT INTO users
+                  (
+                    name,
+                    phone,
+                    email,
+                    referral_code,
+                    referred_by,
+                    wallet_balance
+                  )
+                  VALUES (?, ?, ?, ?, ?, ?)`
+                )
+                  .bind(
+                    name || "CashGrow User",
+                    phone || "",
+                    email || "",
+                    newReferralCode,
+                    referral_code,
+                    0
+                  )
+                  .run();
+
+              referredUserId =
+                userResult.meta.last_row_id;
+            }
+
+            // Check duplicate reward
+            const existingReward =
+              await env.DB.prepare(
+                `SELECT id
+                 FROM referral_rewards
+                 WHERE payment_id = ?`
+              )
+                .bind(razorpay_payment_id)
+                .first();
+
+            if (!existingReward) {
+              await env.DB.prepare(
+                `UPDATE users
+                 SET wallet_balance =
+                   wallet_balance + ?
+                 WHERE id = ?`
+              )
+                .bind(
+                  rewardAmount * 100,
+                  referrer.id
+                )
+                .run();
+
+              await env.DB.prepare(
+                `INSERT INTO referral_rewards
+                (
+                  referrer_user_id,
+                  referred_user_id,
+                  payment_id,
+                  product,
+                  reward_amount,
+                  status
+                )
+                VALUES (?, ?, ?, ?, ?, ?)`
+              )
+                .bind(
+                  referrer.id,
+                  referredUserId,
+                  razorpay_payment_id,
+                  product,
+                  rewardAmount,
+                  "credited"
+                )
+                .run();
+
+              referralMessage =
+                ` Referral reward ₹${rewardAmount} credited.`;
+            }
+          }
+        }
+
         return json({
-          success: false,
-          message: "Verification failed"
-        }, 500);
+          success: true,
+          message:
+            "Payment verified successfully." +
+            referralMessage
+        });
+
+      } catch (error) {
+        return json(
+          {
+            success: false,
+            message: "Verification failed"
+          },
+          500
+        );
       }
     }
 
-    // Website
-    return new Response(`<!DOCTYPE html>
+    // =========================
+    // CASHGROW WEBSITE
+    // =========================
+    if (request.method === "GET") {
+      return new Response(
+        `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport"
+content="width=device-width, initial-scale=1.0">
+
 <title>CashGrow</title>
 
 <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
@@ -211,40 +430,50 @@ body {
 }
 
 .hero {
-  background: linear-gradient(135deg,#172033,#263b70);
+  background: linear-gradient(135deg,#4f46e5,#7c3aed);
   color: white;
   padding: 55px 20px;
   text-align: center;
 }
 
 .hero h1 {
-  margin: 0;
-  font-size: 44px;
+  margin: 0 0 10px;
+  font-size: 38px;
 }
 
 .hero p {
-  font-size: 18px;
-  margin-top: 12px;
+  margin: 0;
+  opacity: .95;
 }
 
 .container {
   max-width: 900px;
-  margin: auto;
-  padding: 30px 18px;
+  margin: 30px auto;
+  padding: 0 18px;
 }
 
-.products {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 20px;
-}
-
+.form-box,
 .card {
   background: white;
-  padding: 25px;
   border-radius: 18px;
-  box-shadow: 0 8px 25px rgba(0,0,0,.08);
-  text-align: center;
+  padding: 22px;
+  margin-bottom: 20px;
+  box-shadow: 0 8px 30px rgba(0,0,0,.08);
+}
+
+input {
+  width: 100%;
+  padding: 14px;
+  margin: 8px 0;
+  border: 1px solid #ddd;
+  border-radius: 10px;
+  font-size: 16px;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit,minmax(260px,1fr));
+  gap: 18px;
 }
 
 .card h2 {
@@ -252,18 +481,19 @@ body {
 }
 
 .price {
-  font-size: 34px;
+  font-size: 32px;
   font-weight: bold;
-  margin: 18px 0;
+  margin: 15px 0;
 }
 
 button {
+  width: 100%;
   border: 0;
-  background: #2563eb;
-  color: white;
-  padding: 14px 25px;
   border-radius: 10px;
-  font-size: 16px;
+  padding: 15px;
+  background: #4f46e5;
+  color: white;
+  font-size: 17px;
   font-weight: bold;
   cursor: pointer;
 }
@@ -272,48 +502,10 @@ button:disabled {
   opacity: .6;
 }
 
-.rewards {
-  margin-top: 30px;
-  background: white;
-  padding: 25px;
-  border-radius: 18px;
-  box-shadow: 0 8px 25px rgba(0,0,0,.06);
-}
-
-.reward {
-  padding: 15px;
-  border-bottom: 1px solid #eee;
-}
-
-.reward:last-child {
-  border-bottom: 0;
-}
-
-.notice {
-  margin-top: 25px;
-  font-size: 13px;
-  color: #666;
-  line-height: 1.6;
-}
-
-.success {
-  display: none;
-  margin-top: 20px;
-  padding: 15px;
-  border-radius: 10px;
-  background: #e7f8ed;
-  color: #176b36;
+.message {
   text-align: center;
-}
-
-@media(max-width:700px) {
-  .products {
-    grid-template-columns: 1fr;
-  }
-
-  .hero h1 {
-    font-size: 36px;
-  }
+  margin: 20px 0;
+  font-weight: bold;
 }
 </style>
 </head>
@@ -327,145 +519,253 @@ button:disabled {
 
 <div class="container">
 
-  <div class="products">
+  <div class="form-box">
+    <h2>Your Details</h2>
+
+    <input id="name"
+      placeholder="Full Name">
+
+    <input id="phone"
+      placeholder="Mobile Number">
+
+    <input id="email"
+      placeholder="Email Address">
+
+    <input id="referral"
+      placeholder="Referral Code (optional)">
+  </div>
+
+  <div class="cards">
 
     <div class="card">
       <h2>Starter Bundle</h2>
+      <p>Digital Creator Starter Bundle</p>
       <div class="price">₹599</div>
-      <p>Digital Creator Bundle</p>
-      <button onclick="buyProduct('starter', this)">
+
+      <button
+        onclick="buy('starter')">
         Buy Now
       </button>
     </div>
 
     <div class="card">
       <h2>Pro Bundle</h2>
+      <p>Digital Creator Pro Bundle</p>
       <div class="price">₹999</div>
-      <p>Premium Digital Creator Bundle</p>
-      <button onclick="buyProduct('pro', this)">
+
+      <button
+        onclick="buy('pro')">
         Buy Now
       </button>
     </div>
 
   </div>
 
-  <div class="rewards">
-    <h2>Referral Rewards</h2>
-
-    <div class="reward">
-      <strong>₹599 Bundle</strong><br>
-      Referral reward: ₹400
-    </div>
-
-    <div class="reward">
-      <strong>₹999 Bundle</strong><br>
-      Referral reward: ₹800
-    </div>
-
-    <div class="notice">
-      Referral rewards are subject to applicable terms,
-      eligibility and verification. No guaranteed income or
-      returns are promised. Digital products are sold as
-      described.
-    </div>
-  </div>
-
-  <div id="success" class="success"></div>
+  <div id="message"
+       class="message"></div>
 
 </div>
 
 <script>
-async function buyProduct(product, button) {
+
+async function buy(product) {
+
+  const button =
+    event.target;
 
   button.disabled = true;
-  button.innerText = "Please wait...";
+  button.innerText =
+    "Creating Order...";
+
+  const name =
+    document.getElementById("name").value;
+
+  const phone =
+    document.getElementById("phone").value;
+
+  const email =
+    document.getElementById("email").value;
+
+  const referral =
+    document.getElementById("referral").value;
 
   try {
 
-    const response = await fetch("/api/create-order", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ product })
-    });
+    const orderResponse =
+      await fetch("/api/create-order", {
+        method: "POST",
+        headers: {
+          "Content-Type":
+            "application/json"
+        },
+        body: JSON.stringify({
+          product,
+          name,
+          phone,
+          email,
+          referral_code: referral
+        })
+      });
 
-    const order = await response.json();
+    const order =
+      await orderResponse.json();
 
-    if (!response.ok) {
-      throw new Error(order.error || "Unable to create order");
+    if (!orderResponse.ok) {
+      throw new Error(
+        order.error ||
+        "Order creation failed"
+      );
     }
 
     const options = {
-      key: "${env.RAZORPAY_KEY_ID}",
+
+      key: order.key_id,
+
       amount: order.amount,
+
       currency: "INR",
+
       name: "CashGrow",
-      description: order.name,
-      order_id: order.order_id,
 
-      handler: async function (payment) {
+      description:
+        order.name,
 
-        const verifyResponse = await fetch("/api/verify", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify(payment)
-        });
+      order_id:
+        order.order_id,
 
-        const result = await verifyResponse.json();
+      handler: async function(response) {
 
-        const success = document.getElementById("success");
+        document.getElementById(
+          "message"
+        ).innerText =
+          "Verifying payment...";
+
+        const verifyResponse =
+          await fetch("/api/verify", {
+            method: "POST",
+            headers: {
+              "Content-Type":
+                "application/json"
+            },
+            body: JSON.stringify({
+
+              razorpay_order_id:
+                response.razorpay_order_id,
+
+              razorpay_payment_id:
+                response.razorpay_payment_id,
+
+              razorpay_signature:
+                response.razorpay_signature,
+
+              name,
+              phone,
+              email,
+              referral_code:
+                referral
+
+            })
+          });
+
+        const result =
+          await verifyResponse.json();
 
         if (result.success) {
-          success.style.display = "block";
-          success.innerText =
-            "Payment verified successfully! Payment ID: " +
-            payment.razorpay_payment_id;
+
+          document.getElementById(
+            "message"
+          ).innerText =
+            result.message;
+
         } else {
-          success.style.display = "block";
-          success.innerText =
-            "Payment verification failed. Please contact support.";
+
+          document.getElementById(
+            "message"
+          ).innerText =
+            result.message ||
+            "Payment verification failed";
+
         }
+
+        button.disabled = false;
+        button.innerText =
+          "Buy Now";
+      },
+
+      prefill: {
+        name,
+        email,
+        contact: phone
       },
 
       theme: {
-        color: "#2563eb"
+        color: "#4f46e5"
       }
+
     };
 
-    const razorpay = new Razorpay(options);
+    const rzp =
+      new Razorpay(options);
 
-    razorpay.on("payment.failed", function () {
-      alert("Payment failed. Please try again.");
-    });
+    rzp.on(
+      "payment.failed",
+      function(response) {
 
-    razorpay.open();
+        document.getElementById(
+          "message"
+        ).innerText =
+          "Payment failed. Please try again.";
+
+        button.disabled = false;
+        button.innerText =
+          "Buy Now";
+      }
+    );
+
+    rzp.open();
 
   } catch (error) {
-    alert(error.message);
-  }
 
-  button.disabled = false;
-  button.innerText = "Buy Now";
+    document.getElementById(
+      "message"
+    ).innerText =
+      error.message;
+
+    button.disabled = false;
+    button.innerText =
+      "Buy Now";
+  }
 }
+
 </script>
 
 </body>
-</html>`, {
-      headers: {
-        "Content-Type": "text/html;charset=UTF-8"
-      }
+</html>`,
+        {
+          headers: {
+            "Content-Type":
+              "text/html; charset=UTF-8"
+          }
+        }
+      );
+    }
+
+    return new Response("Not Found", {
+      status: 404
     });
   }
 };
 
+
 function json(data, status = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: {
-      "Content-Type": "application/json"
+  return new Response(
+    JSON.stringify(data),
+    {
+      status,
+      headers: {
+        "Content-Type":
+          "application/json"
+      }
     }
-  });
+  );
 }
