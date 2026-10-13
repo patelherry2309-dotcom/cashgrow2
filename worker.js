@@ -196,7 +196,7 @@ export default {
     500
   );
 }
-        }
+        
 
         const payment = await paymentResponse.json();
 
