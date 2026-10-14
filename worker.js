@@ -181,7 +181,7 @@ export default {
         if (!paymentResponse.ok) {
   const errorText = await paymentResponse.text();
 
-  console.log(
+  console.error(
     "Razorpay API error:",
     paymentResponse.status,
     errorText
