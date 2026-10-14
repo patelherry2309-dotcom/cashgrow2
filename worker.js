@@ -55,7 +55,7 @@ export default {
         );
 
         const data = await response.json();
-
+console.error("Razorpay response:", response.status, data);
         if (!response.ok) {
           return json(
             {
