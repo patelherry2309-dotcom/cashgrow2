@@ -255,6 +255,53 @@ console.error("Razorpay response:", response.status, data);
         // -------------------------
         // Save payment
         // -------------------------
+        // Find or create buyer user before saving payment
+let paymentUserId = null;
+
+const existingPaymentUser = await env.DB.prepare(
+  `SELECT id
+   FROM users
+   WHERE (email != '' AND email = ?)
+      OR (phone != '' AND phone = ?)
+   LIMIT 1`
+)
+.bind(email || "", phone || "")
+.first();
+
+if (existingPaymentUser) {
+  paymentUserId = existingPaymentUser.id;
+} else {
+  const paymentReferralCode =
+    "CG" +
+    Math.random()
+      .toString(36)
+      .substring(2, 8)
+      .toUpperCase();
+
+  const newPaymentUser = await env.DB.prepare(
+    `INSERT INTO users
+    (
+      name,
+      phone,
+      email,
+      referral_code,
+      referred_by,
+      wallet_balance
+    )
+    VALUES (?, ?, ?, ?, ?, ?)`
+  )
+  .bind(
+    name || "CashGrow User",
+    phone || "",
+    email || "",
+    paymentReferralCode,
+    referral_code || null,
+    0
+  )
+  .run();
+
+  paymentUserId = newPaymentUser.meta.last_row_id;
+}
         await env.DB.prepare(
           `INSERT INTO payments
           (
