@@ -401,6 +401,7 @@ console.error("Razorpay response:", response.status, data);
         });
 
       } catch (error) {
+       console.error("VERIFY ERROR:", error);
         return json(
           {
             success: false,
