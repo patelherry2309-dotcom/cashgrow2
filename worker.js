@@ -80,6 +80,7 @@ console.error("Razorpay response:", response.status, data);
           }
         });
       } catch (error) {
+       console.error("CREATE ORDER ERROR:", error);
         return json(
           {
             error: "Server error while creating order"
