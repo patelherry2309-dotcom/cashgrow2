@@ -128,8 +128,17 @@ console.error("Razorpay response:", response.status, data);
           `${razorpay_order_id}|${razorpay_payment_id}`;
 
         const encoder = new TextEncoder();
+ 
+console.error(
+  "RAZORPAY_KEY_CHECK",
+  JSON.stringify({
+    keyIdPresent: !!env.RAZORPAY_KEY_ID,
+    secretPresent: !!env.RAZORPAY_KEY_SECRET
+  })
+);
 
-        const key = await crypto.subtle.importKey(
+const key = await crypto.subtle.importKey(
+        
           "raw",
           encoder.encode(env.RAZORPAY_KEY_SECRET),
           {
