@@ -183,10 +183,13 @@ console.error("Razorpay response:", response.status, data);
   const errorText = await paymentResponse.text();
 
   console.error(
-    "Razorpay API error:",
-    paymentResponse.status,
-    errorText
-  );
+  "RAZORPAY_DEBUG",
+  JSON.stringify({
+    status: paymentResponse.status,
+    ok: paymentResponse.ok,
+    error: errorText
+  })
+);
 
   return json(
     {
