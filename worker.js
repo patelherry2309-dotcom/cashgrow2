@@ -460,15 +460,21 @@ if (existingPaymentUser) {
             referralMessage
         });
 
-      } catch (error) {
-       console.error("VERIFY ERROR:", error);
-        return json(
-          {
-            success: false,
-            message: "Verification failed"
-          },
-          500
-        );
+    } catch (error) {
+  console.error(
+    "VERIFY ERROR:",
+    error?.message || String(error)
+  );
+
+  return json(
+    {
+      success: false,
+      message: "Verification failed",
+      error: error?.message || String(error)
+    },
+    500
+  );
+}
       }
     }
 
