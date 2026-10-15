@@ -406,7 +406,7 @@ if (existingPaymentUser) {
             const existingReward =
               await env.DB.prepare(
                 `SELECT id
-                 FROM referral_rewards
+                 FROM referrals
                  WHERE payment_id = ?`
               )
                 .bind(razorpay_payment_id)
@@ -426,7 +426,7 @@ if (existingPaymentUser) {
                 .run();
 
               await env.DB.prepare(
-                `INSERT INTO referral_rewards
+                `INSERT INTO referrals
                 (
                   referrer_user_id,
                   referred_user_id,
