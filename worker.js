@@ -194,7 +194,7 @@ console.error("Razorpay response:", response.status, data);
   return json(
     {
       success: false,
-      message: `Razorpay API error ${paymentResponse.status}`,
+      message: errorText,
       details: errorText
     },
     500
