@@ -477,7 +477,8 @@ if (existingPaymentUser) {
 }
       }
     }
-    // =========================
+}
+  // =========================
     // CASHGROW WEBSITE
     // =========================
     if (request.method === "GET") {
