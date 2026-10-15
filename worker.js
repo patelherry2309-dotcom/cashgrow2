@@ -477,7 +477,7 @@ if (existingPaymentUser) {
 }
       }
     }
-
+}
     // =========================
     // CASHGROW WEBSITE
     // =========================
