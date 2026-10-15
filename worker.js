@@ -315,7 +315,7 @@ if (existingPaymentUser) {
           VALUES (?, ?, ?, ?, ?, ?)`
         )
           .bind(
-            null,
+            paymentUserId,
             razorpay_order_id,
             razorpay_payment_id,
             product,
