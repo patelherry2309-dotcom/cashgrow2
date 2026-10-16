@@ -588,7 +588,474 @@ button:disabled {
 </head>
 
 <body>
+<!-- ==================== CASHGROW LOGIN / REGISTER / DASHBOARD ==================== -->
 
+<style>
+#cgAuthBox,
+#cgDashboard {
+  max-width: 520px;
+  margin: 25px auto;
+  padding: 22px;
+  border-radius: 18px;
+  background: #ffffff;
+  box-shadow: 0 8px 30px rgba(0,0,0,0.12);
+  font-family: Arial, sans-serif;
+}
+
+#cgAuthBox h2,
+#cgDashboard h2 {
+  text-align: center;
+  margin-bottom: 18px;
+}
+
+.cg-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 13px;
+  margin: 7px 0;
+  border: 1px solid #ddd;
+  border-radius: 10px;
+  font-size: 15px;
+}
+
+.cg-btn {
+  width: 100%;
+  padding: 13px;
+  margin-top: 10px;
+  border: none;
+  border-radius: 10px;
+  font-size: 16px;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+.cg-login-btn {
+  background: #111827;
+  color: white;
+}
+
+.cg-register-btn {
+  background: #16a34a;
+  color: white;
+}
+
+.cg-tab-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 15px;
+}
+
+.cg-tab {
+  flex: 1;
+  padding: 11px;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  background: #eeeeee;
+  font-weight: bold;
+}
+
+.cg-tab.active {
+  background: #111827;
+  color: white;
+}
+
+.cg-message {
+  text-align: center;
+  margin-top: 12px;
+  font-weight: bold;
+}
+
+.cg-card {
+  padding: 15px;
+  margin: 10px 0;
+  border-radius: 12px;
+  background: #f5f5f5;
+}
+
+.cg-wallet {
+  font-size: 28px;
+  font-weight: bold;
+  text-align: center;
+  margin: 10px 0;
+}
+
+.cg-referral {
+  text-align: center;
+  font-size: 20px;
+  font-weight: bold;
+  letter-spacing: 2px;
+}
+
+#cgDashboard {
+  display: none;
+}
+</style>
+
+<div id="cgAuthBox">
+
+  <h2>CashGrow Account</h2>
+
+  <div class="cg-tab-row">
+    <button
+      id="cgLoginTab"
+      class="cg-tab active"
+      onclick="cgShowLogin()">
+      Login
+    </button>
+
+    <button
+      id="cgRegisterTab"
+      class="cg-tab"
+      onclick="cgShowRegister()">
+      Create Account
+    </button>
+  </div>
+
+  <!-- LOGIN -->
+
+  <div id="cgLoginForm">
+
+    <input
+      id="cgLoginIdentifier"
+      class="cg-input"
+      type="text"
+      placeholder="Email or Mobile Number">
+
+    <input
+      id="cgLoginPassword"
+      class="cg-input"
+      type="password"
+      placeholder="Password">
+
+    <button
+      class="cg-btn cg-login-btn"
+      onclick="cgLogin()">
+      Login
+    </button>
+
+  </div>
+
+  <!-- REGISTER -->
+
+  <div id="cgRegisterForm" style="display:none;">
+
+    <input
+      id="cgRegName"
+      class="cg-input"
+      type="text"
+      placeholder="Full Name">
+
+    <input
+      id="cgRegPhone"
+      class="cg-input"
+      type="tel"
+      placeholder="Mobile Number">
+
+    <input
+      id="cgRegEmail"
+      class="cg-input"
+      type="email"
+      placeholder="Email">
+
+    <input
+      id="cgRegPassword"
+      class="cg-input"
+      type="password"
+      placeholder="Password (minimum 6 characters)">
+
+    <input
+      id="cgRegReferral"
+      class="cg-input"
+      type="text"
+      placeholder="Referral Code (optional)">
+
+    <button
+      class="cg-btn cg-register-btn"
+      onclick="cgRegister()">
+      Create Account
+    </button>
+
+  </div>
+
+  <div
+    id="cgAuthMessage"
+    class="cg-message">
+  </div>
+
+</div>
+
+
+<!-- DASHBOARD -->
+
+<div id="cgDashboard">
+
+  <h2>CashGrow Dashboard</h2>
+
+  <div class="cg-card">
+    <b>Welcome</b>
+    <div id="cgUserName"></div>
+  </div>
+
+  <div class="cg-card">
+    <b>Wallet Balance</b>
+    <div
+      id="cgWallet"
+      class="cg-wallet">
+      ₹0
+    </div>
+  </div>
+
+  <div class="cg-card">
+    <b>Your Referral Code</b>
+    <div
+      id="cgReferralCode"
+      class="cg-referral">
+      -
+    </div>
+  </div>
+
+  <div class="cg-card">
+    <b>Total Referrals</b>
+    <div id="cgReferralCount">0</div>
+  </div>
+
+  <button
+    class="cg-btn cg-login-btn"
+    onclick="cgLogout()">
+    Logout
+  </button>
+
+</div>
+
+
+<script>
+
+async function cgShowLogin() {
+
+  document.getElementById('cgLoginForm').style.display = 'block';
+  document.getElementById('cgRegisterForm').style.display = 'none';
+
+  document.getElementById('cgLoginTab').classList.add('active');
+  document.getElementById('cgRegisterTab').classList.remove('active');
+
+  document.getElementById('cgAuthMessage').textContent = '';
+}
+
+
+async function cgShowRegister() {
+
+  document.getElementById('cgLoginForm').style.display = 'none';
+  document.getElementById('cgRegisterForm').style.display = 'block';
+
+  document.getElementById('cgLoginTab').classList.remove('active');
+  document.getElementById('cgRegisterTab').classList.add('active');
+
+  document.getElementById('cgAuthMessage').textContent = '';
+}
+
+
+async function cgLogin() {
+
+  const identifier =
+    document.getElementById('cgLoginIdentifier').value.trim();
+
+  const password =
+    document.getElementById('cgLoginPassword').value;
+
+  const message =
+    document.getElementById('cgAuthMessage');
+
+  if (!identifier || !password) {
+    message.textContent = 'Please enter email/mobile and password.';
+    return;
+  }
+
+  message.textContent = 'Logging in...';
+
+  try {
+
+    const response = await fetch('/api/login', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        identifier: identifier,
+        password: password
+      })
+    });
+
+    const data = await response.json();
+
+    if (!data.success) {
+      message.textContent =
+        data.message || 'Login failed.';
+      return;
+    }
+
+    message.textContent = 'Login successful.';
+
+    cgDisplayDashboard(data.user);
+
+  } catch (error) {
+
+    message.textContent =
+      'Something went wrong. Please try again.';
+  }
+}
+
+
+async function cgRegister() {
+
+  const name =
+    document.getElementById('cgRegName').value.trim();
+
+  const phone =
+    document.getElementById('cgRegPhone').value.trim();
+
+  const email =
+    document.getElementById('cgRegEmail').value.trim();
+
+  const password =
+    document.getElementById('cgRegPassword').value;
+
+  const referralCode =
+    document.getElementById('cgRegReferral').value.trim();
+
+  const message =
+    document.getElementById('cgAuthMessage');
+
+  if (!name || !phone || !email || !password) {
+    message.textContent =
+      'Please fill all required fields.';
+    return;
+  }
+
+  if (password.length < 6) {
+    message.textContent =
+      'Password must be at least 6 characters.';
+    return;
+  }
+
+  message.textContent = 'Creating account...';
+
+  try {
+
+    const response = await fetch('/api/register', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        name: name,
+        phone: phone,
+        email: email,
+        password: password,
+        referral_code: referralCode
+      })
+    });
+
+    const data = await response.json();
+
+    if (!data.success) {
+      message.textContent =
+        data.message || 'Registration failed.';
+      return;
+    }
+
+    message.textContent =
+      'Account created successfully.';
+
+    cgDisplayDashboard(data.user);
+
+  } catch (error) {
+
+    message.textContent =
+      'Something went wrong. Please try again.';
+  }
+}
+
+
+function cgDisplayDashboard(user) {
+
+  document.getElementById('cgAuthBox').style.display = 'none';
+
+  document.getElementById('cgDashboard').style.display = 'block';
+
+  document.getElementById('cgUserName').textContent =
+    user.name || '';
+
+  const wallet =
+    Number(user.wallet_balance || 0) / 100;
+
+  document.getElementById('cgWallet').textContent =
+    '₹' + wallet.toFixed(2);
+
+  document.getElementById('cgReferralCode').textContent =
+    user.referral_code || '-';
+
+  document.getElementById('cgReferralCount').textContent =
+    user.referral_count || 0;
+}
+
+
+async function cgCheckLogin() {
+
+  try {
+
+    const response =
+      await fetch('/api/me');
+
+    if (!response.ok) {
+      return;
+    }
+
+    const data =
+      await response.json();
+
+    if (data.success && data.loggedIn) {
+      cgDisplayDashboard(data.user);
+    }
+
+  } catch (error) {
+    console.log('Not logged in');
+  }
+}
+
+
+async function cgLogout() {
+
+  try {
+
+    await fetch('/api/logout', {
+      method: 'POST'
+    });
+
+  } catch (error) {
+  }
+
+  document.getElementById('cgDashboard').style.display =
+    'none';
+
+  document.getElementById('cgAuthBox').style.display =
+    'block';
+
+  document.getElementById('cgLoginIdentifier').value =
+    '';
+
+  document.getElementById('cgLoginPassword').value =
+    '';
+
+  cgShowLogin();
+}
+
+
+cgCheckLogin();
+
+</script>
+
+<!-- ==================== END CASHGROW AUTH SYSTEM ==================== -->
 <section class="hero">
   <h1>CashGrow</h1>
   <p>Digital Creator Bundles & Referral Rewards</p>
