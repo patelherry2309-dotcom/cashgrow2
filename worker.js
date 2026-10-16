@@ -826,7 +826,565 @@ async function buy(product) {
         }
       );
     }
+// ==================== CASHGROW AUTH SYSTEM ====================
 
+const cgHex = (bytes) =>
+  Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
+
+const cgHexToBytes = (hex) => {
+  const out = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < out.length; i++) {
+    out[i] = parseInt(hex.substr(i * 2, 2), 16);
+  }
+  return out;
+};
+
+const cgHashPassword = async (password) => {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(password),
+    "PBKDF2",
+    false,
+    ["deriveBits"]
+  );
+
+  const bits = await crypto.subtle.deriveBits(
+    {
+      name: "PBKDF2",
+      salt,
+      iterations: 100000,
+      hash: "SHA-256"
+    },
+    key,
+    256
+  );
+
+  return `pbkdf2$100000$${cgHex(salt)}$${cgHex(new Uint8Array(bits))}`;
+};
+
+const cgVerifyPassword = async (password, stored) => {
+  try {
+    const parts = stored.split("$");
+
+    if (parts.length !== 4 || parts[0] !== "pbkdf2") {
+      return false;
+    }
+
+    const iterations = Number(parts[1]);
+    const salt = cgHexToBytes(parts[2]);
+    const oldHash = cgHexToBytes(parts[3]);
+
+    const key = await crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode(password),
+      "PBKDF2",
+      false,
+      ["deriveBits"]
+    );
+
+    const bits = await crypto.subtle.deriveBits(
+      {
+        name: "PBKDF2",
+        salt,
+        iterations,
+        hash: "SHA-256"
+      },
+      key,
+      256
+    );
+
+    const newHash = new Uint8Array(bits);
+
+    if (newHash.length !== oldHash.length) return false;
+
+    let diff = 0;
+
+    for (let i = 0; i < newHash.length; i++) {
+      diff |= newHash[i] ^ oldHash[i];
+    }
+
+    return diff === 0;
+  } catch (e) {
+    return false;
+  }
+};
+
+const cgCreateReferralCode = async () => {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const bytes = crypto.getRandomValues(new Uint8Array(6));
+
+    let suffix = "";
+
+    for (let i = 0; i < 6; i++) {
+      suffix += chars[bytes[i] % chars.length];
+    }
+
+    const code = "CG" + suffix;
+
+    const exists = await env.DB
+      .prepare("SELECT id FROM users WHERE referral_code = ? LIMIT 1")
+      .bind(code)
+      .first();
+
+    if (!exists) return code;
+  }
+
+  throw new Error("Could not generate referral code");
+};
+
+const cgSessionCookie = (token) =>
+  `session_token=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=604800`;
+
+const cgJsonResponse = (data, status = 200, extraHeaders = {}) =>
+  new Response(JSON.stringify(data), {
+    status,
+    headers: {
+      "Content-Type": "application/json",
+      ...extraHeaders
+    }
+  });
+
+
+// ---------- REGISTER ----------
+
+if (url.pathname === "/api/register" && request.method === "POST") {
+  try {
+    const body = await request.json();
+
+    const name = String(body.name || "").trim();
+    const phone = String(body.phone || "").replace(/\D/g, "");
+    const email = String(body.email || "").trim().toLowerCase();
+    const password = String(body.password || "");
+    const referralCode = String(body.referral_code || "").trim().toUpperCase();
+
+    if (!name || !phone || !email || !password) {
+      return cgJsonResponse(
+        { success: false, message: "All fields are required." },
+        400
+      );
+    }
+
+    if (password.length < 6) {
+      return cgJsonResponse(
+        { success: false, message: "Password must be at least 6 characters." },
+        400
+      );
+    }
+
+    const existingExact = await env.DB
+      .prepare(
+        "SELECT * FROM users WHERE lower(email) = ? AND phone = ? LIMIT 1"
+      )
+      .bind(email, phone)
+      .first();
+
+    const passwordHash = await cgHashPassword(password);
+
+    const sessionToken = crypto.randomUUID();
+    const sessionExpires = new Date(
+      Date.now() + 7 * 24 * 60 * 60 * 1000
+    ).toISOString();
+
+    // Existing user without password = activate existing account
+    if (existingExact) {
+      if (existingExact.password_hash) {
+        return cgJsonResponse(
+          {
+            success: false,
+            message: "Account already exists. Please login."
+          },
+          409
+        );
+      }
+
+      await env.DB
+        .prepare(
+          `UPDATE users
+           SET password_hash = ?,
+               session_token = ?,
+               session_expires_at = ?
+           WHERE id = ?`
+        )
+        .bind(
+          passwordHash,
+          sessionToken,
+          sessionExpires,
+          existingExact.id
+        )
+        .run();
+
+      return cgJsonResponse(
+        {
+          success: true,
+          message: "Account activated successfully.",
+          user: {
+            id: existingExact.id,
+            name: existingExact.name,
+            phone: existingExact.phone,
+            email: existingExact.email,
+            referral_code: existingExact.referral_code,
+            referred_by: existingExact.referred_by,
+            wallet_balance: existingExact.wallet_balance || 0
+          }
+        },
+        200,
+        {
+          "Set-Cookie": cgSessionCookie(sessionToken)
+        }
+      );
+    }
+
+    // Email or phone already used by another account
+    const conflict = await env.DB
+      .prepare(
+        "SELECT id FROM users WHERE lower(email) = ? OR phone = ? LIMIT 1"
+      )
+      .bind(email, phone)
+      .first();
+
+    if (conflict) {
+      return cgJsonResponse(
+        {
+          success: false,
+          message: "Email or phone is already registered."
+        },
+        409
+      );
+    }
+
+    // Validate referral code if supplied
+    let referredBy = null;
+
+    if (referralCode) {
+      const referrer = await env.DB
+        .prepare(
+          "SELECT id, referral_code FROM users WHERE referral_code = ? LIMIT 1"
+        )
+        .bind(referralCode)
+        .first();
+
+      if (referrer) {
+        referredBy = referrer.referral_code;
+      }
+    }
+
+    const newReferralCode = await cgCreateReferralCode();
+
+    const inserted = await env.DB
+      .prepare(
+        `INSERT INTO users
+        (
+          name,
+          phone,
+          email,
+          referral_code,
+          referred_by,
+          wallet_balance,
+          password_hash,
+          session_token,
+          session_expires_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .bind(
+        name,
+        phone,
+        email,
+        newReferralCode,
+        referredBy,
+        0,
+        passwordHash,
+        sessionToken,
+        sessionExpires
+      )
+      .run();
+
+    return cgJsonResponse(
+      {
+        success: true,
+        message: "Account created successfully.",
+        user: {
+          id: inserted.meta.last_row_id,
+          name,
+          phone,
+          email,
+          referral_code: newReferralCode,
+          referred_by: referredBy,
+          wallet_balance: 0
+        }
+      },
+      200,
+      {
+        "Set-Cookie": cgSessionCookie(sessionToken)
+      }
+    );
+  } catch (error) {
+    return cgJsonResponse(
+      {
+        success: false,
+        message: "Registration failed.",
+        error: String(error.message || error)
+      },
+      500
+    );
+  }
+}
+
+
+// ---------- LOGIN ----------
+
+if (url.pathname === "/api/login" && request.method === "POST") {
+  try {
+    const body = await request.json();
+
+    const identifier = String(body.identifier || "")
+      .trim()
+      .toLowerCase();
+
+    const password = String(body.password || "");
+
+    if (!identifier || !password) {
+      return cgJsonResponse(
+        {
+          success: false,
+          message: "Email/phone and password are required."
+        },
+        400
+      );
+    }
+
+    const phoneIdentifier = identifier.replace(/\D/g, "");
+
+    const user = await env.DB
+      .prepare(
+        `SELECT *
+         FROM users
+         WHERE lower(email) = ?
+            OR phone = ?
+         LIMIT 1`
+      )
+      .bind(identifier, phoneIdentifier)
+      .first();
+
+    if (!user) {
+      return cgJsonResponse(
+        {
+          success: false,
+          message: "Account not found."
+        },
+        401
+      );
+    }
+
+    if (!user.password_hash) {
+      return cgJsonResponse(
+        {
+          success: false,
+          message:
+            "Please create/activate your account first using Register."
+        },
+        400
+      );
+    }
+
+    const valid = await cgVerifyPassword(
+      password,
+      user.password_hash
+    );
+
+    if (!valid) {
+      return cgJsonResponse(
+        {
+          success: false,
+          message: "Incorrect password."
+        },
+        401
+      );
+    }
+
+    const sessionToken = crypto.randomUUID();
+
+    const sessionExpires = new Date(
+      Date.now() + 7 * 24 * 60 * 60 * 1000
+    ).toISOString();
+
+    await env.DB
+      .prepare(
+        `UPDATE users
+         SET session_token = ?,
+             session_expires_at = ?
+         WHERE id = ?`
+      )
+      .bind(
+        sessionToken,
+        sessionExpires,
+        user.id
+      )
+      .run();
+
+    return cgJsonResponse(
+      {
+        success: true,
+        message: "Login successful.",
+        user: {
+          id: user.id,
+          name: user.name,
+          phone: user.phone,
+          email: user.email,
+          referral_code: user.referral_code,
+          referred_by: user.referred_by,
+          wallet_balance: user.wallet_balance || 0
+        }
+      },
+      200,
+      {
+        "Set-Cookie": cgSessionCookie(sessionToken)
+      }
+    );
+  } catch (error) {
+    return cgJsonResponse(
+      {
+        success: false,
+        message: "Login failed."
+      },
+      500
+    );
+  }
+}
+
+
+// ---------- CURRENT USER ----------
+
+if (url.pathname === "/api/me" && request.method === "GET") {
+  try {
+    const cookie = request.headers.get("Cookie") || "";
+
+    const match = cookie.match(
+      /(?:^|;\s*)session_token=([^;]+)/
+    );
+
+    if (!match) {
+      return cgJsonResponse(
+        {
+          success: false,
+          loggedIn: false
+        },
+        401
+      );
+    }
+
+    const sessionToken = match[1];
+
+    const now = new Date().toISOString();
+
+    const user = await env.DB
+      .prepare(
+        `SELECT
+          id,
+          name,
+          phone,
+          email,
+          referral_code,
+          referred_by,
+          wallet_balance
+         FROM users
+         WHERE session_token = ?
+           AND session_expires_at > ?
+         LIMIT 1`
+      )
+      .bind(sessionToken, now)
+      .first();
+
+    if (!user) {
+      return cgJsonResponse(
+        {
+          success: false,
+          loggedIn: false
+        },
+        401
+      );
+    }
+
+    const stats = await env.DB
+      .prepare(
+        `SELECT
+          COUNT(*) AS referral_count,
+          COALESCE(SUM(reward_amount), 0) AS referral_earnings
+         FROM referrals
+         WHERE referrer_user_id = ?`
+      )
+      .bind(user.id)
+      .first();
+
+    return cgJsonResponse({
+      success: true,
+      loggedIn: true,
+      user: {
+        ...user,
+        wallet_balance: user.wallet_balance || 0,
+        referral_count: stats?.referral_count || 0,
+        referral_earnings: stats?.referral_earnings || 0
+      }
+    });
+  } catch (error) {
+    return cgJsonResponse(
+      {
+        success: false,
+        loggedIn: false
+      },
+      500
+    );
+  }
+}
+
+
+// ---------- LOGOUT ----------
+
+if (url.pathname === "/api/logout" && request.method === "POST") {
+  try {
+    const cookie = request.headers.get("Cookie") || "";
+
+    const match = cookie.match(
+      /(?:^|;\s*)session_token=([^;]+)/
+    );
+
+    if (match) {
+      await env.DB
+        .prepare(
+          `UPDATE users
+           SET session_token = NULL,
+               session_expires_at = NULL
+           WHERE session_token = ?`
+        )
+        .bind(match[1])
+        .run();
+    }
+
+    return cgJsonResponse(
+      {
+        success: true,
+        message: "Logged out."
+      },
+      200,
+      {
+        "Set-Cookie":
+          "session_token=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0"
+      }
+    );
+  } catch (error) {
+    return cgJsonResponse(
+      {
+        success: false,
+        message: "Logout failed."
+      },
+      500
+    );
+  }
+}
     return new Response("Not Found", {
       status: 404
     });
