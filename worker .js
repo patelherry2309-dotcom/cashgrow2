@@ -279,13 +279,14 @@ async function hmac(secret,text){
   const key=await crypto.subtle.importKey("raw",new TextEncoder().encode(secret),{name:"HMAC",hash:"SHA-256"},false,["sign"]);
   return hex(await crypto.subtle.sign("HMAC",key,new TextEncoder().encode(text)));
 }
-async function razorpayGetPayment(env,paymentId){
+async function razorpayGetPayment(env){
   const auth=btoa(`${env.RAZORPAY_KEY_ID}:${env.RAZORPAY_KEY_SECRET}`);
   const r=await fetch(`https://api.razorpay.com/v1/payments/${encodeURIComponent(paymentId)}`,{headers:{Authorization:`Basic ${auth}`}});
   const d=await r.json(); return {ok:r.ok,data:d};
 }
 async function verifyPayment(request,env){
   const b=await request.json();
+ console.log("VERIFY START");
   const orderId=clean(b.razorpay_order_id), paymentId=clean(b.razorpay_payment_id), signature=clean(b.razorpay_signature);
   const product=productFrom(b.product);
   if(!orderId||!paymentId||!signature||!product)return json({success:false,message:"Required payment fields are missing."},400);
