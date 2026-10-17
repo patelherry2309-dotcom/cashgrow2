@@ -694,6 +694,53 @@ async function buy(product,ev){
 }
 checkLogin();
 </script>
+<section id="transactionsSection" style="margin:24px 0;padding:20px;background:#fff;border:1px solid rgba(11,61,46,.12);border-radius:18px;box-shadow:0 10px 30px rgba(7,27,20,.06)">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px">
+    <div>
+      <h2 style="margin:0;color:#071b14">Transactions</h2>
+      <div style="margin-top:4px;color:#66756f;font-size:13px">Your recent payment and wallet activity</div>
+    </div>
+  </div>
+
+  <div id="transactionsList">
+    <div style="color:#66756f">Loading transactions...</div>
+  </div>
+</section>
+
+<script>
+async function loadTransactions(){
+  const box=document.getElementById("transactionsList");
+  if(!box)return;
+
+  try{
+    const r=await fetch("/api/transactions");
+    const d=await r.json();
+
+    if(!d.success || !d.items || !d.items.length){
+      box.innerHTML='<div style="color:#66756f;padding:15px 0">No transactions yet.</div>';
+      return;
+    }
+
+    box.innerHTML=d.items.map(function(t){
+      return '<div style="display:flex;justify-content:space-between;gap:15px;padding:14px 0;border-bottom:1px solid rgba(11,61,46,.08)">' +
+        '<div><div style="font-weight:700;color:#071b14">' +
+        (t.type || "Transaction") +
+        '</div><div style="font-size:12px;color:#66756f;margin-top:4px">' +
+        (t.created_at || "") +
+        '</div></div>' +
+        '<div style="text-align:right"><div style="font-weight:800;color:#0b3d2e">₹' +
+        Number(t.amount || 0).toLocaleString("en-IN") +
+        '</div><div style="font-size:12px;color:#0b3d2e;margin-top:4px">' +
+        (t.status || "Success") +
+        '</div></div></div>';
+    }).join("");
+  }catch(e){
+    box.innerHTML='<div style="color:#b42318;padding:15px 0">Unable to load transactions.</div>';
+  }
+}
+
+loadTransactions();
+</script>
 </body></html>`;
 }
 
