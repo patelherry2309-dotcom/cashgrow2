@@ -1,26 +1,79 @@
 export default {
   async fetch(request, env) {
-    const url = new URL(request.url);
     try {
       await ensureSchema(env);
-      return await router(request, env, url);
+      const url = new URL(request.url);
+      const path = url.pathname;
+
+      if (path === "/api/health" && request.method === "GET") return json({ success:true, service:"CashGrow", status:"ok" });
+
+      if (path === "/api/register" && request.method === "POST") return register(request, env);
+      if (path === "/api/login" && request.method === "POST") return login(request, env);
+      if (path === "/api/logout" && request.method === "POST") return logout(request, env);
+      if (path === "/api/me" && request.method === "GET") return me(request, env);
+      if (path === "/api/profile" && request.method === "POST") return profile(request, env);
+
+      if (path === "/api/create-order" && request.method === "POST") return createOrder(request, env);
+      if (path === "/api/verify" && request.method === "POST") return verifyPayment(request, env);
+
+      if (path === "/api/dashboard" && request.method === "GET") return dashboard(request, env);
+      if (path === "/api/referrals" && request.method === "GET") return referrals(request, env);
+      if (path === "/api/transactions" && request.method === "GET") return transactions(request, env);
+      if (path === "/api/withdraw" && request.method === "POST") return withdraw(request, env);
+      if (path === "/api/withdrawals" && request.method === "GET") return withdrawals(request, env);
+
+      if (request.method === "GET") return html(home());
+
+      return json({ success:false, message:"Not Found" },404);
     } catch (error) {
       console.error("CASHGROW_ERROR", error);
-      return json({ success:false, message:"Internal server error." }, 500);
+      return json({ success:false, message:"Server error", error:error?.message || String(error) },500);
     }
   }
 };
 
 const PRODUCTS = {
-  starter: { key:"starter", name:"Starter Bundle", amount:59900, price:599, reward:40000, rewardRupees:400 },
-  pro: { key:"pro", name:"Pro Bundle", amount:99900, price:999, reward:80000, rewardRupees:800 }
+  starter:{ key:"starter", name:"Starter Bundle", amount:59900, reward:400 },
+  pro:{ key:"pro", name:"Pro Bundle", amount:99900, reward:800 }
 };
 const MIN_WITHDRAWAL = 100000;
-const SESSION_DAYS = 7;
-// CashGrow deployment sync
-async function ensureSchema(env) {
-  if (!env.DB) throw new Error("D1 binding DB is missing.");
+
+async function ensureSchema(env){
+  if(!env.DB) throw new Error("D1 binding DB is missing");
   const stmts = [
+    `CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      phone TEXT NOT NULL DEFAULT '',
+      email TEXT NOT NULL DEFAULT '',
+      referral_code TEXT UNIQUE,
+      referred_by TEXT,
+      wallet_balance INTEGER NOT NULL DEFAULT 0,
+      password_hash TEXT,
+      session_token TEXT,
+      session_expires_at TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`,
+    `CREATE TABLE IF NOT EXISTS payments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER,
+      razorpay_order_id TEXT,
+      razorpay_payment_id TEXT UNIQUE,
+      product TEXT,
+      amount INTEGER,
+      status TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`,
+    `CREATE TABLE IF NOT EXISTS referrals (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      referrer_user_id INTEGER,
+      referred_user_id INTEGER,
+      payment_id TEXT,
+      product TEXT,
+      reward_amount INTEGER,
+      status TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`,
     `CREATE TABLE IF NOT EXISTS transactions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER NOT NULL,
@@ -30,472 +83,565 @@ async function ensureSchema(env) {
       status TEXT NOT NULL DEFAULT 'completed',
       reference_id TEXT,
       description TEXT,
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`,
     `CREATE TABLE IF NOT EXISTS withdrawals (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER NOT NULL,
       amount INTEGER NOT NULL,
-      status TEXT NOT NULL DEFAULT 'pending',
       method TEXT,
-      account_name TEXT,
-      account_number TEXT,
-      ifsc TEXT,
-      upi_id TEXT,
-      note TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    )`,
-    `CREATE TABLE IF NOT EXISTS password_resets (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL,
-      token_hash TEXT NOT NULL UNIQUE,
-      expires_at TEXT NOT NULL,
-      used INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL
-    )`,
-    `CREATE INDEX IF NOT EXISTS idx_transactions_user ON transactions(user_id, created_at)`,
-    `CREATE INDEX IF NOT EXISTS idx_withdrawals_user ON withdrawals(user_id, created_at)`,
-    `CREATE INDEX IF NOT EXISTS idx_resets_token ON password_resets(token_hash)`
+      account_details TEXT,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`
   ];
-  for (const sql of stmts) await env.DB.prepare(sql).run();
+  for(const s of stmts) await env.DB.prepare(s).run();
 }
 
-async function router(request, env, url) {
-  if (url.pathname === "/api/register" && request.method === "POST") return register(request, env);
-  if (url.pathname === "/api/login" && request.method === "POST") return login(request, env);
-  if (url.pathname === "/api/logout" && request.method === "POST") return logout(request, env);
-  if (url.pathname === "/api/me" && request.method === "GET") return me(request, env);
-  if (url.pathname === "/api/profile" && request.method === "POST") return profile(request, env);
-  if (url.pathname === "/api/forgot-password" && request.method === "POST") return forgotPassword(request, env, url);
-  if (url.pathname === "/api/reset-password" && request.method === "POST") return resetPassword(request, env);
-  if (url.pathname === "/api/create-order" && request.method === "POST") return createOrder(request, env);
-  if (url.pathname === "/api/verify" && request.method === "POST") return verifyPayment(request, env);
-  if (url.pathname === "/api/dashboard" && request.method === "GET") return dashboard(request, env);
-  if (url.pathname === "/api/referrals" && request.method === "GET") return referrals(request, env);
-  if (url.pathname === "/api/transactions" && request.method === "GET") return transactions(request, env);
-  if (url.pathname === "/api/withdraw" && request.method === "POST") return withdraw(request, env);
-  if (url.pathname === "/api/withdrawals" && request.method === "GET") return withdrawals(request, env);
-  if (url.pathname === "/api/admin/overview" && request.method === "GET") return adminOverview(request, env);
-  if (url.pathname === "/api/admin/withdrawals" && request.method === "GET") return adminWithdrawals(request, env);
-  if (url.pathname === "/api/admin/withdrawal-status" && request.method === "POST") return adminWithdrawalStatus(request, env);
-  if (url.pathname === "/api/admin/payment-status" && request.method === "POST") return adminPaymentStatus(request, env);
-  if (url.pathname === "/api/health" && request.method === "GET") return json({success:true, service:"CashGrow", time:new Date().toISOString()});
-  if (request.method === "GET") return home(request, env, url);
-  return json({success:false,message:"Method not allowed."},405);
+function json(data,status=200,headers={}){
+  return new Response(JSON.stringify(data),{status,headers:{"Content-Type":"application/json; charset=UTF-8",...headers}});
 }
+function html(body,status=200){ return new Response(body,{status,headers:{"Content-Type":"text/html; charset=UTF-8"}}); }
+function text(v){ return String(v ?? "").trim(); }
+function money(paise){ return "₹"+(Number(paise||0)/100).toFixed(2); }
+function cookieToken(request){
+  const c=request.headers.get("Cookie")||"";
+  const m=c.match(/(?:^|;\s*)session_token=([^;]+)/);
+  return m ? m[1] : null;
+}
+function setSession(token){
+  return `session_token=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=604800`;
+}
+function clearSession(){
+  return "session_token=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0";
+}
+async function currentUser(request,env){
+  const token=cookieToken(request);
+  if(!token) return null;
+  const now=new Date().toISOString();
+  return env.DB.prepare(`SELECT id,name,phone,email,referral_code,referred_by,wallet_balance,created_at
+    FROM users WHERE session_token=? AND session_expires_at>? LIMIT 1`).bind(token,now).first();
+}
+async function requireUser(request,env){
+  const u=await currentUser(request,env);
+  if(!u) throw Object.assign(new Error("Please login first"),{status:401});
+  return u;
+}
+function safeError(error){ return error?.message || String(error); }
 
-function json(data, status=200, headers={}) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: {"Content-Type":"application/json; charset=UTF-8", ...headers}
-  });
-}
-function html(body, status=200) {
-  return new Response(body,{status,headers:{"Content-Type":"text/html; charset=UTF-8","Cache-Control":"no-store"}});
-}
-function now(){ return new Date().toISOString(); }
-function clean(s){ return String(s ?? "").trim(); }
-function phone(s){ return clean(s).replace(/\D/g,""); }
-function moneyPaise(n){ return Math.round(Number(n)||0); }
-function b64url(bytes){
-  let s=""; const a=new Uint8Array(bytes);
-  for(let i=0;i<a.length;i++) s+=String.fromCharCode(a[i]);
-  return btoa(s).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
-}
-function hex(bytes){ return Array.from(new Uint8Array(bytes)).map(x=>x.toString(16).padStart(2,"0")).join(""); }
-function unhex(s){ const a=new Uint8Array(s.length/2); for(let i=0;i<a.length;i++) a[i]=parseInt(s.slice(i*2,i*2+2),16); return a; }
-
-async function sha256(text){
-  return crypto.subtle.digest("SHA-256",new TextEncoder().encode(text));
-}
-async function hashToken(token){ return hex(await sha256(token)); }
-
+const hex = bytes => Array.from(bytes).map(b=>b.toString(16).padStart(2,"0")).join("");
+const hexBytes = hexstr => {
+  const out=new Uint8Array(hexstr.length/2);
+  for(let i=0;i<out.length;i++) out[i]=parseInt(hexstr.slice(i*2,i*2+2),16);
+  return out;
+};
 async function hashPassword(password){
   const salt=crypto.getRandomValues(new Uint8Array(16));
   const key=await crypto.subtle.importKey("raw",new TextEncoder().encode(password),"PBKDF2",false,["deriveBits"]);
   const bits=await crypto.subtle.deriveBits({name:"PBKDF2",salt,iterations:100000,hash:"SHA-256"},key,256);
-  return `pbkdf2$100000$${hex(salt)}$${hex(bits)}`;
+  return `pbkdf2$100000$${hex(salt)}$${hex(new Uint8Array(bits))}`;
 }
-async function verifyPassword(password, stored){
+async function verifyPassword(password,stored){
   try{
-    const p=String(stored).split("$"); if(p.length!==4||p[0]!=="pbkdf2") return false;
+    const p=stored.split("$");
+    if(p.length!==4 || p[0]!=="pbkdf2") return false;
     const key=await crypto.subtle.importKey("raw",new TextEncoder().encode(password),"PBKDF2",false,["deriveBits"]);
-    const bits=await crypto.subtle.deriveBits({name:"PBKDF2",salt:unhex(p[2]),iterations:Number(p[1]),hash:"SHA-256"},key,256);
-    const a=new Uint8Array(bits), b=unhex(p[3]); if(a.length!==b.length) return false;
-    let d=0; for(let i=0;i<a.length;i++) d|=a[i]^b[i]; return d===0;
+    const bits=await crypto.subtle.deriveBits({name:"PBKDF2",salt:hexBytes(p[2]),iterations:Number(p[1]),hash:"SHA-256"},key,256);
+    const a=new Uint8Array(bits), b=hexBytes(p[3]);
+    if(a.length!==b.length) return false;
+    let d=0; for(let i=0;i<a.length;i++) d|=a[i]^b[i];
+    return d===0;
   }catch{return false;}
 }
 async function referralCode(env){
   const chars="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-  for(let k=0;k<20;k++){
-    const b=crypto.getRandomValues(new Uint8Array(6)); let s="CG";
-    for(let i=0;i<6;i++) s+=chars[b[i]%chars.length];
-    const e=await env.DB.prepare("SELECT id FROM users WHERE referral_code=? LIMIT 1").bind(s).first();
-    if(!e)return s;
+  for(let n=0;n<20;n++){
+    const bytes=crypto.getRandomValues(new Uint8Array(6));
+    let s="CG"; for(const b of bytes) s+=chars[b%chars.length];
+    const x=await env.DB.prepare("SELECT id FROM users WHERE referral_code=? LIMIT 1").bind(s).first();
+    if(!x) return s;
   }
-  throw new Error("Could not generate referral code.");
+  throw new Error("Could not generate referral code");
 }
-function cookie(token,maxAge=604800){
-  return `session_token=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${maxAge}`;
-}
-function getCookie(request,name){
-  const c=request.headers.get("Cookie")||"";
-  const m=c.match(new RegExp("(?:^|;\\\\s*)"+name+"=([^;]+)"));
-  return m?m[1]:null;
-}
-async function currentUser(request,env){
-  const token=getCookie(request,"session_token"); if(!token)return null;
-  return await env.DB.prepare(
-    `SELECT id,name,phone,email,referral_code,referred_by,wallet_balance FROM users
-     WHERE session_token=? AND session_expires_at>? LIMIT 1`
-  ).bind(token,now()).first();
-}
-async function requireUser(request,env){
-  const u=await currentUser(request,env);
-  if(!u) return {error:json({success:false,message:"Please login."},401)};
-  return {user:u};
-}
+
 async function register(request,env){
-  const b=await request.json(); const name=clean(b.name), ph=phone(b.phone), email=clean(b.email).toLowerCase(), pw=String(b.password||""), ref=clean(b.referral_code).toUpperCase();
-  if(!name||!ph||!email||!pw)return json({success:false,message:"All fields are required."},400);
-  if(pw.length<6)return json({success:false,message:"Password must be at least 6 characters."},400);
-  const existing=await env.DB.prepare("SELECT * FROM users WHERE lower(email)=? AND phone=? LIMIT 1").bind(email,ph).first();
-  const pwh=await hashPassword(pw), token=crypto.randomUUID(), exp=new Date(Date.now()+SESSION_DAYS*86400000).toISOString();
-  if(existing){
-    if(existing.password_hash)return json({success:false,message:"Account already exists. Please login."},409);
-    await env.DB.prepare("UPDATE users SET password_hash=?,session_token=?,session_expires_at=? WHERE id=?").bind(pwh,token,exp,existing.id).run();
-    return json({success:true,message:"Account activated successfully.",user:safeUser(existing)},200,{"Set-Cookie":cookie(token)});
-  }
-  const conflict=await env.DB.prepare("SELECT id FROM users WHERE lower(email)=? OR phone=? LIMIT 1").bind(email,ph).first();
-  if(conflict)return json({success:false,message:"Email or phone is already registered."},409);
-  let referredBy=null;
-  if(ref){
-    const r=await env.DB.prepare("SELECT referral_code FROM users WHERE referral_code=? LIMIT 1").bind(ref).first();
-    if(r)referredBy=r.referral_code;
-  }
-  const code=await referralCode(env);
-  const ins=await env.DB.prepare(
-    `INSERT INTO users(name,phone,email,referral_code,referred_by,wallet_balance,password_hash,session_token,session_expires_at)
-     VALUES(?,?,?,?,?,?,?,?,?)`
-  ).bind(name,ph,email,code,referredBy,0,pwh,token,exp).run();
-  const user={id:ins.meta.last_row_id,name,phone:ph,email,referral_code:code,referred_by:referredBy,wallet_balance:0};
-  return json({success:true,message:"Account created successfully.",user},200,{"Set-Cookie":cookie(token)});
-}
-function safeUser(u){ return {id:u.id,name:u.name,phone:u.phone,email:u.email,referral_code:u.referral_code,referred_by:u.referred_by,wallet_balance:u.wallet_balance||0}; }
-async function login(request,env){
-  const b=await request.json(), id=clean(b.identifier).toLowerCase(), pw=String(b.password||""), ph=phone(id);
-  if(!id||!pw)return json({success:false,message:"Email/mobile and password are required."},400);
-  const u=await env.DB.prepare("SELECT * FROM users WHERE lower(email)=? OR phone=? LIMIT 1").bind(id,ph).first();
-  if(!u)return json({success:false,message:"Account not found."},401);
-  if(!u.password_hash)return json({success:false,message:"Please create/activate your account first."},400);
-  if(!(await verifyPassword(pw,u.password_hash)))return json({success:false,message:"Incorrect password."},401);
-  const token=crypto.randomUUID(), exp=new Date(Date.now()+SESSION_DAYS*86400000).toISOString();
-  await env.DB.prepare("UPDATE users SET session_token=?,session_expires_at=? WHERE id=?").bind(token,exp,u.id).run();
-  return json({success:true,message:"Login successful.",user:safeUser(u)},200,{"Set-Cookie":cookie(token)});
-}
-async function logout(request,env){
-  const t=getCookie(request,"session_token"); if(t)await env.DB.prepare("UPDATE users SET session_token=NULL,session_expires_at=NULL WHERE session_token=?").bind(t).run();
-  return json({success:true},200,{"Set-Cookie":cookie("",0)});
-}
-async function me(request,env){
-  const u=await currentUser(request,env); if(!u)return json({success:false,loggedIn:false},401);
-  const s=await env.DB.prepare("SELECT COUNT(*) referral_count,COALESCE(SUM(reward_amount),0) referral_earnings FROM referrals WHERE referrer_user_id=?").bind(u.id).first();
-  return json({success:true,loggedIn:true,user:{...safeUser(u),referral_count:Number(s?.referral_count||0),referral_earnings:Number(s?.referral_earnings||0)}});
-}
-async function profile(request,env){
-  const a=await requireUser(request,env); if(a.error)return a.error; const u=a.user,b=await request.json();
-  const name=clean(b.name)||u.name, ph=phone(b.phone)||u.phone, email=clean(b.email).toLowerCase()||u.email;
-  const conflict=await env.DB.prepare("SELECT id FROM users WHERE (lower(email)=? OR phone=?) AND id<>? LIMIT 1").bind(email,ph,u.id).first();
-  if(conflict)return json({success:false,message:"Email or phone is already used."},409);
-  await env.DB.prepare("UPDATE users SET name=?,phone=?,email=? WHERE id=?").bind(name,ph,email,u.id).run();
-  return json({success:true,user:safeUser({...u,name,phone:ph,email})});
-}
-
-async function forgotPassword(request,env,url){
-  const b=await request.json(), identifier=clean(b.identifier).toLowerCase(), ph=phone(identifier);
-  const u=await env.DB.prepare("SELECT id,email,name FROM users WHERE lower(email)=? OR phone=? LIMIT 1").bind(identifier,ph).first();
-  // Always generic response to avoid account enumeration.
-  if(u){
-    const raw=crypto.randomUUID().replace(/-/g,"")+crypto.randomUUID().replace(/-/g,"");
-    const h=await hashToken(raw), exp=new Date(Date.now()+30*60*1000).toISOString();
-    await env.DB.prepare("INSERT INTO password_resets(user_id,token_hash,expires_at,created_at) VALUES(?,?,?,?)").bind(u.id,h,exp,now()).run();
-    const base=url.origin;
-    const resetLink=`${base}/?reset=${encodeURIComponent(raw)}`;
-    if(env.RESEND_API_KEY){
-      await sendResetEmail(env,u,resetLink).catch(e=>console.error("RESET_EMAIL",e));
-    } else {
-      console.log("CASHGROW_RESET_LINK",resetLink);
+  try{
+    const b=await request.json();
+    const name=text(b.name), phone=text(b.phone).replace(/\D/g,""), email=text(b.email).toLowerCase(), password=String(b.password||"");
+    const ref=text(b.referral_code).toUpperCase();
+    if(!name||!phone||!email||!password) return json({success:false,message:"All fields are required."},400);
+    if(password.length<6) return json({success:false,message:"Password must be at least 6 characters."},400);
+    const existing=await env.DB.prepare("SELECT * FROM users WHERE lower(email)=? OR phone=? LIMIT 1").bind(email,phone).first();
+    const hash=await hashPassword(password);
+    const token=crypto.randomUUID(), expires=new Date(Date.now()+7*86400000).toISOString();
+    if(existing){
+      if(existing.password_hash) return json({success:false,message:"Email or phone is already registered. Please login."},409);
+      await env.DB.prepare("UPDATE users SET name=?,password_hash=?,session_token=?,session_expires_at=? WHERE id=?").bind(name,hash,token,expires,existing.id).run();
+      return json({success:true,message:"Account activated successfully.",user:{...existing,name,password_hash:undefined}},200,{"Set-Cookie":setSession(token)});
     }
-  }
-  return json({success:true,message:"If the account exists, reset instructions have been generated. Check your email."});
-}
-async function sendResetEmail(env,u,link){
-  const from=env.RESET_FROM_EMAIL||"CashGrow <onboarding@resend.dev>";
-  const r=await fetch("https://api.resend.com/emails",{method:"POST",headers:{"Authorization":`Bearer ${env.RESEND_API_KEY}`,"Content-Type":"application/json"},body:JSON.stringify({from,to:[u.email],subject:"CashGrow password reset",html:`<p>Hello ${escapeHtml(u.name||"User")},</p><p>Reset your CashGrow password:</p><p><a href="${link}">${link}</a></p><p>This link expires in 30 minutes.</p>`})});
-  if(!r.ok)throw new Error("Email send failed");
-}
-async function resetPassword(request,env){
-  const b=await request.json(), token=clean(b.token), pw=String(b.password||"");
-  if(!token||pw.length<6)return json({success:false,message:"Valid token and password (6+ characters) are required."},400);
-  const h=await hashToken(token), row=await env.DB.prepare("SELECT * FROM password_resets WHERE token_hash=? AND used=0 AND expires_at>? LIMIT 1").bind(h,now()).first();
-  if(!row)return json({success:false,message:"Reset link is invalid or expired."},400);
-  const pwh=await hashPassword(pw), session=crypto.randomUUID(), exp=new Date(Date.now()+SESSION_DAYS*86400000).toISOString();
-  await env.DB.prepare("UPDATE users SET password_hash=?,session_token=?,session_expires_at=? WHERE id=?").bind(pwh,session,exp,row.user_id).run();
-  await env.DB.prepare("UPDATE password_resets SET used=1 WHERE id=?").bind(row.id).run();
-  return json({success:true,message:"Password reset successfully."},200,{"Set-Cookie":cookie(session)});
-}
-
-function productFrom(key){ return PRODUCTS[String(key||"").toLowerCase()]||null; }
-async function createOrder(request,env){
-  const b=await request.json(), product=productFrom(b.product);
-  if(!product)return json({success:false,message:"Invalid product."},400);
-  if(!env.RAZORPAY_KEY_ID||!env.RAZORPAY_KEY_SECRET)return json({success:false,message:"Razorpay configuration is missing."},500);
-  const ph=phone(b.phone), email=clean(b.email).toLowerCase(), name=clean(b.name), ref=clean(b.referral_code).toUpperCase();
-  if(!name||!ph||!email)return json({success:false,message:"Name, phone and email are required."},400);
-  let user=await env.DB.prepare("SELECT * FROM users WHERE lower(email)=? OR phone=? LIMIT 1").bind(email,ph).first();
-  if(!user){
     let referredBy=null;
     if(ref){
       const r=await env.DB.prepare("SELECT referral_code FROM users WHERE referral_code=? LIMIT 1").bind(ref).first();
-      if(r)referredBy=r.referral_code;
+      if(r) referredBy=r.referral_code;
     }
     const code=await referralCode(env);
-    const ins=await env.DB.prepare("INSERT INTO users(name,phone,email,referral_code,referred_by,wallet_balance) VALUES(?,?,?,?,?,0)").bind(name,ph,email,code,referredBy).run();
-    user={id:ins.meta.last_row_id,name,phone:ph,email,referral_code:code,referred_by:referredBy,wallet_balance:0};
-  }
-console.log("RZP CONFIG CHECK", {
-  keyIdPrefix: env.RAZORPAY_KEY_ID?.slice(0, 8),
-  keyIdLength: env.RAZORPAY_KEY_ID?.length,
-  secretLength: env.RAZORPAY_KEY_SECRET?.length
-});
-  const auth=btoa(`${env.RAZORPAY_KEY_ID}:${env.RAZORPAY_KEY_SECRET}`);
-  const rr=await fetch("https://api.razorpay.com/v1/orders",{method:"POST",headers:{"Authorization":`Basic ${auth}`,"Content-Type":"application/json"},body:JSON.stringify({amount:product.amount,currency:"INR",receipt:`CG${user.id}-${Date.now()}`,notes:{user_id:String(user.id),product:product.key}})});
-  const data=await rr.json();
-  if(!rr.ok)return json({success:false,message:"Could not create Razorpay order.",error:data?.error?.description||"Razorpay error"},500);
-  return json({success:true,order:data,key_id:env.RAZORPAY_KEY_ID,product,user_id:user.id});
+    const result=await env.DB.prepare(`INSERT INTO users(name,phone,email,referral_code,referred_by,wallet_balance,password_hash,session_token,session_expires_at)
+      VALUES(?,?,?,?,?,?,?,?,?)`).bind(name,phone,email,code,referredBy,0,hash,token,expires).run();
+    return json({success:true,message:"Account created successfully.",user:{id:result.meta.last_row_id,name,phone,email,referral_code:code,referred_by:referredBy,wallet_balance:0}},200,{"Set-Cookie":setSession(token)});
+  }catch(e){ return json({success:false,message:"Registration failed.",error:safeError(e)},500); }
 }
-async function hmac(secret,text){
+async function login(request,env){
+  try{
+    const b=await request.json(), identifier=text(b.identifier).toLowerCase(), password=String(b.password||"");
+    if(!identifier||!password) return json({success:false,message:"Email/phone and password are required."},400);
+    const phone=identifier.replace(/\D/g,"");
+    const u=await env.DB.prepare("SELECT * FROM users WHERE lower(email)=? OR phone=? LIMIT 1").bind(identifier,phone).first();
+    if(!u) return json({success:false,message:"Account not found."},401);
+    if(!u.password_hash) return json({success:false,message:"Please create/activate your account first."},400);
+    if(!(await verifyPassword(password,u.password_hash))) return json({success:false,message:"Incorrect password."},401);
+    const token=crypto.randomUUID(), expires=new Date(Date.now()+7*86400000).toISOString();
+    await env.DB.prepare("UPDATE users SET session_token=?,session_expires_at=? WHERE id=?").bind(token,expires,u.id).run();
+    return json({success:true,message:"Login successful.",user:{id:u.id,name:u.name,phone:u.phone,email:u.email,referral_code:u.referral_code,referred_by:u.referred_by,wallet_balance:u.wallet_balance||0}},200,{"Set-Cookie":setSession(token)});
+  }catch(e){return json({success:false,message:"Login failed.",error:safeError(e)},500);}
+}
+async function logout(request,env){
+  try{ const t=cookieToken(request); if(t) await env.DB.prepare("UPDATE users SET session_token=NULL,session_expires_at=NULL WHERE session_token=?").bind(t).run();
+    return json({success:true,message:"Logged out."},200,{"Set-Cookie":clearSession()});
+  }catch(e){return json({success:false,message:"Logout failed."},500);}
+}
+async function me(request,env){
+  try{
+    const u=await currentUser(request,env); if(!u) return json({success:false,loggedIn:false},401);
+    const s=await env.DB.prepare("SELECT COUNT(*) referral_count,COALESCE(SUM(reward_amount),0) referral_earnings FROM referrals WHERE referrer_user_id=? AND status='credited'").bind(u.id).first();
+    return json({success:true,loggedIn:true,user:{...u,referral_count:s?.referral_count||0,referral_earnings:s?.referral_earnings||0}});
+  }catch(e){return json({success:false,loggedIn:false,error:safeError(e)},500);}
+}
+async function profile(request,env){
+  try{
+    const u=await requireUser(request,env), b=await request.json(), name=text(b.name), phone=text(b.phone).replace(/\D/g,"");
+    if(!name||!phone) return json({success:false,message:"Name and phone are required."},400);
+    await env.DB.prepare("UPDATE users SET name=?,phone=? WHERE id=?").bind(name,phone,u.id).run();
+    return json({success:true,message:"Profile updated."});
+  }catch(e){return json({success:false,message:safeError(e)},e.status||500);}
+}
+
+async function createOrder(request,env){
+  try{
+    const b=await request.json(), p=PRODUCTS[b.product];
+    if(!p) return json({success:false,error:"Invalid product"},400);
+    if(!env.RAZORPAY_KEY_ID||!env.RAZORPAY_KEY_SECRET) return json({success:false,error:"Razorpay keys are not configured."},500);
+    const auth=btoa(`${env.RAZORPAY_KEY_ID}:${env.RAZORPAY_KEY_SECRET}`);
+    const r=await fetch("https://api.razorpay.com/v1/orders",{method:"POST",headers:{"Authorization":`Basic ${auth}`,"Content-Type":"application/json"},body:JSON.stringify({amount:p.amount,currency:"INR",receipt:`cashgrow_${Date.now()}`})});
+    const data=await r.json(); console.log("Razorpay response:",r.status,data);
+    if(!r.ok) return json({success:false,error:data?.error?.description||"Razorpay order creation failed"},500);
+    return json({success:true,order_id:data.id,amount:p.amount,name:p.name,key_id:env.RAZORPAY_KEY_ID});
+  }catch(e){console.error("CREATE ORDER ERROR",e);return json({success:false,error:"Server error while creating order"},500);}
+}
+async function hmac(secret,message){
   const key=await crypto.subtle.importKey("raw",new TextEncoder().encode(secret),{name:"HMAC",hash:"SHA-256"},false,["sign"]);
-  return hex(await crypto.subtle.sign("HMAC",key,new TextEncoder().encode(text)));
-}
-async function razorpayGetPayment(env){
-  const auth=btoa(`${env.RAZORPAY_KEY_ID}:${env.RAZORPAY_KEY_SECRET}`);
-  const r=await fetch(`https://api.razorpay.com/v1/payments/${encodeURIComponent(paymentId)}`,{headers:{Authorization:`Basic ${auth}`}});
-  const d=await r.json(); return {ok:r.ok,data:d};
+  return hex(new Uint8Array(await crypto.subtle.sign("HMAC",key,new TextEncoder().encode(message))));
 }
 async function verifyPayment(request,env){
-  const b=await request.json();
- console.log("VERIFY START");
-  const orderId=clean(b.razorpay_order_id), paymentId=clean(b.razorpay_payment_id), signature=clean(b.razorpay_signature);
-  const product=productFrom(b.product);
-  if(!orderId||!paymentId||!signature||!product)return json({success:false,message:"Required payment fields are missing."},400);
-  if(!env.RAZORPAY_KEY_SECRET)return json({success:false,message:"Razorpay secret is missing."},500);
-  const expected=await hmac(env.RAZORPAY_KEY_SECRET,`${orderId}|${paymentId}`);
-  if(expected!==signature)return json({success:false,message:"Invalid payment signature."},400);
-  const rp=await razorpayGetPayment(env,paymentId);
-  if(!rp.ok)return json({success:false,message:"Unable to verify payment with Razorpay."},400);
-  const p=rp.data;
-  if(p.order_id!==orderId)return json({success:false,message:"Payment/order mismatch."},400);
-  if(p.status!=="captured")return json({success:false,message:"Payment is not captured."},400);
-  if(Number(p.amount)!==product.amount)return json({success:false,message:"Payment amount mismatch."},400);
-  const duplicate=await env.DB.prepare("SELECT id,user_id FROM payments WHERE razorpay_payment_id=? LIMIT 1").bind(paymentId).first();
-  if(duplicate)return json({success:true,message:"Payment already verified.",duplicate:true});
-  let userId=Number(b.user_id)||0;
-  if(!userId){
-    const u=await env.DB.prepare("SELECT id FROM users WHERE lower(email)=? OR phone=? LIMIT 1").bind(clean(b.email).toLowerCase(),phone(b.phone)).first();
-    userId=Number(u?.id||0);
-  }
-  if(!userId)return json({success:false,message:"User account could not be identified."},400);
-  const user=await env.DB.prepare("SELECT * FROM users WHERE id=? LIMIT 1").bind(userId).first();
-  if(!user)return json({success:false,message:"User not found."},404);
-  const t=now();
-  await env.DB.prepare(
-    `INSERT INTO payments(user_id,amount,product,status,razorpay_payment_id,created_at)
-     VALUES(?,?,?,?,?,?)`
-  ).bind(userId,product.amount,product.key,"captured",paymentId,t).run();
-  await env.DB.prepare(
-    `INSERT INTO transactions(user_id,type,amount,direction,status,reference_id,description,created_at)
-     VALUES(?,?,?,?,?,?,?,?)`
-  ).bind(userId,"payment",product.amount,"debit","completed",paymentId,`${product.name} purchase`,t).run();
-  if(user.referred_by){
-    const referrer=await env.DB.prepare("SELECT id FROM users WHERE referral_code=? LIMIT 1").bind(user.referred_by).first();
-    if(referrer && Number(referrer.id)!==userId){
-      const exists=await env.DB.prepare("SELECT id FROM referrals WHERE payment_id=? LIMIT 1").bind(paymentId).first();
-      if(!exists){
-        const reward=product.reward;
-        await env.DB.prepare("INSERT INTO referrals(referrer_user_id,referred_user_id,product,reward_amount,status,payment_id,created_at) VALUES(?,?,?,?,?,?,?)")
-          .bind(referrer.id,userId,product.key,reward,"completed",paymentId,t).run();
-        await env.DB.prepare("UPDATE users SET wallet_balance=COALESCE(wallet_balance,0)+? WHERE id=?").bind(reward,referrer.id).run();
-        await env.DB.prepare("INSERT INTO transactions(user_id,type,amount,direction,status,reference_id,description,created_at) VALUES(?,?,?,?,?,?,?,?)")
-          .bind(referrer.id,"referral_cashback",reward,"credit","completed",paymentId,`${product.name} referral cashback`,t).run();
+  try{
+    const b=await request.json();
+    const {razorpay_order_id,razorpay_payment_id,razorpay_signature,name,phone,email,referral_code}=b;
+    if(!razorpay_order_id||!razorpay_payment_id||!razorpay_signature) return json({success:false,message:"Payment details are missing"},400);
+    const expected=await hmac(env.RAZORPAY_KEY_SECRET,`${razorpay_order_id}|${razorpay_payment_id}`);
+    if(expected!==razorpay_signature) return json({success:false,message:"Invalid payment signature"},400);
+    const auth=btoa(`${env.RAZORPAY_KEY_ID}:${env.RAZORPAY_KEY_SECRET}`);
+    const pr=await fetch(`https://api.razorpay.com/v1/payments/${razorpay_payment_id}`,{headers:{"Authorization":`Basic ${auth}`}});
+    if(!pr.ok){const t=await pr.text();console.error("RAZORPAY_DEBUG",pr.status,t);return json({success:false,message:t},500);}
+    const payment=await pr.json();
+    if(payment.order_id!==razorpay_order_id) return json({success:false,message:"Order mismatch"},400);
+    if(payment.status!=="captured") return json({success:false,message:"Payment is not captured"},400);
+    const product=payment.amount===59900?"starter":payment.amount===99900?"pro":null;
+    if(!product) return json({success:false,message:"Invalid payment amount"},400);
+    const existing=await env.DB.prepare("SELECT id FROM payments WHERE razorpay_payment_id=?").bind(razorpay_payment_id).first();
+    if(existing) return json({success:true,message:"Payment already verified."});
+    let userId=null;
+    const current=await currentUser(request,env);
+    if(current) userId=current.id;
+    if(!userId){
+      const found=await env.DB.prepare("SELECT id FROM users WHERE (email!='' AND lower(email)=?) OR (phone!='' AND phone=?) LIMIT 1").bind(text(email).toLowerCase(),text(phone).replace(/\D/g,"")).first();
+      if(found) userId=found.id;
+      else {
+        const code=await referralCode(env);
+        const nr=await env.DB.prepare("INSERT INTO users(name,phone,email,referral_code,referred_by,wallet_balance) VALUES(?,?,?,?,?,0)")
+          .bind(name||"CashGrow User",text(phone).replace(/\D/g,""),text(email).toLowerCase(),code,referral_code||null).run();
+        userId=nr.meta.last_row_id;
       }
     }
-  }
-  return json({success:true,message:"Payment verified successfully.",payment_id:paymentId,product:product.key});
+    await env.DB.prepare("INSERT INTO payments(user_id,razorpay_order_id,razorpay_payment_id,product,amount,status) VALUES(?,?,?,?,?,?)")
+      .bind(userId,razorpay_order_id,razorpay_payment_id,product,payment.amount,payment.status).run();
+    await env.DB.prepare("INSERT INTO transactions(user_id,type,amount,direction,status,reference_id,description) VALUES(?,?,?,?,?,?,?)")
+      .bind(userId,"purchase",payment.amount,"debit","completed",razorpay_payment_id,`Purchased ${PRODUCTS[product].name}`).run();
+    let rewardMessage="";
+    if(referral_code){
+      const ref=await env.DB.prepare("SELECT id FROM users WHERE referral_code=? LIMIT 1").bind(text(referral_code).toUpperCase()).first();
+      if(ref && ref.id!==userId){
+        const dup=await env.DB.prepare("SELECT id FROM referrals WHERE payment_id=?").bind(razorpay_payment_id).first();
+        if(!dup){
+          const reward=PRODUCTS[product].reward*100;
+          await env.DB.prepare("UPDATE users SET wallet_balance=wallet_balance+? WHERE id=?").bind(reward,ref.id).run();
+          await env.DB.prepare("INSERT INTO referrals(referrer_user_id,referred_user_id,payment_id,product,reward_amount,status) VALUES(?,?,?,?,?,?)")
+            .bind(ref.id,userId,razorpay_payment_id,product,PRODUCTS[product].reward,"credited").run();
+          await env.DB.prepare("INSERT INTO transactions(user_id,type,amount,direction,status,reference_id,description) VALUES(?,?,?,?,?,?,?)")
+            .bind(ref.id,"referral_reward",reward,"credit","completed",razorpay_payment_id,`Referral reward for ${PRODUCTS[product].name}`).run();
+          rewardMessage=` Referral reward ₹${PRODUCTS[product].reward} credited.`;
+        }
+      }
+    }
+    return json({success:true,message:"Payment verified successfully."+rewardMessage});
+  }catch(e){console.error("VERIFY ERROR",e);return json({success:false,message:"Verification failed",error:safeError(e)},500);}
 }
 
 async function dashboard(request,env){
-  const a=await requireUser(request,env); if(a.error)return a.error; const u=a.user;
-  const [r,p,t,w]=await Promise.all([
-    env.DB.prepare("SELECT COUNT(*) count,COALESCE(SUM(reward_amount),0) earnings FROM referrals WHERE referrer_user_id=?").bind(u.id).first(),
-    env.DB.prepare("SELECT id,amount,product,status,razorpay_payment_id,created_at FROM payments WHERE user_id=? ORDER BY id DESC LIMIT 20").bind(u.id).all(),
-    env.DB.prepare("SELECT id,type,amount,direction,status,reference_id,description,created_at FROM transactions WHERE user_id=? ORDER BY id DESC LIMIT 50").bind(u.id).all(),
-    env.DB.prepare("SELECT id,amount,status,method,account_name,account_number,ifsc,upi_id,created_at,updated_at FROM withdrawals WHERE user_id=? ORDER BY id DESC LIMIT 20").bind(u.id).all()
-  ]);
-  return json({success:true,user:{...safeUser(u),wallet_balance:Number(u.wallet_balance||0)},referrals:{count:Number(r?.results?.[0]?.count||r?.count||0),earnings:Number(r?.results?.[0]?.earnings||r?.earnings||0)},payments:p.results||[],transactions:t.results||[],withdrawals:w.results||[]});
+  try{
+    const u=await requireUser(request,env);
+    const refs=await env.DB.prepare("SELECT COUNT(*) count,COALESCE(SUM(reward_amount),0) earnings FROM referrals WHERE referrer_user_id=? AND status='credited'").bind(u.id).first();
+    const tx=await env.DB.prepare("SELECT * FROM transactions WHERE user_id=? ORDER BY id DESC LIMIT 10").bind(u.id).all();
+    return json({success:true,user:u,referrals:refs,transactions:tx.results||[]});
+  }catch(e){return json({success:false,message:safeError(e)},e.status||500);}
 }
 async function referrals(request,env){
-  const a=await requireUser(request,env); if(a.error)return a.error;
-  const r=await env.DB.prepare(
-    `SELECT r.id,r.product,r.reward_amount,r.status,r.payment_id,r.created_at,
-            u.name referred_name,u.email referred_email
-     FROM referrals r LEFT JOIN users u ON u.id=r.referred_user_id
-     WHERE r.referrer_user_id=? ORDER BY r.id DESC LIMIT 100`
-  ).bind(a.user.id).all();
-  return json({success:true,referrals:r.results||[]});
+  try{
+    const u=await requireUser(request,env);
+    const r=await env.DB.prepare(`SELECT r.*,u.name,u.phone,u.email FROM referrals r LEFT JOIN users u ON u.id=r.referred_user_id WHERE r.referrer_user_id=? ORDER BY r.id DESC`).bind(u.id).all();
+    return json({success:true,referral_code:u.referral_code,items:r.results||[]});
+  }catch(e){return json({success:false,message:safeError(e)},e.status||500);}
 }
 async function transactions(request,env){
-  const a=await requireUser(request,env); if(a.error)return a.error;
-  const r=await env.DB.prepare("SELECT * FROM transactions WHERE user_id=? ORDER BY id DESC LIMIT 100").bind(a.user.id).all();
-  return json({success:true,transactions:r.results||[]});
+  try{
+    const u=await requireUser(request,env);
+    const r=await env.DB.prepare("SELECT * FROM transactions WHERE user_id=? ORDER BY id DESC LIMIT 100").bind(u.id).all();
+    return json({success:true,items:r.results||[]});
+  }catch(e){return json({success:false,message:safeError(e)},e.status||500);}
 }
 async function withdraw(request,env){
-  const a=await requireUser(request,env); if(a.error)return a.error; const u=a.user,b=await request.json();
-  const amount=moneyPaise(b.amount), method=clean(b.method), accountName=clean(b.account_name), accountNumber=clean(b.account_number), ifsc=clean(b.ifsc).toUpperCase(), upi=clean(b.upi_id);
-  if(amount<MIN_WITHDRAWAL)return json({success:false,message:"Minimum withdrawal is ₹1,000."},400);
-  if(amount%100!==0)return json({success:false,message:"Withdrawal amount must be in whole rupees."},400);
-  if(!method)return json({success:false,message:"Withdrawal method is required."},400);
-  if(method==="upi"&&!upi)return json({success:false,message:"UPI ID is required."},400);
-  if(method!=="upi"&&(!accountName||!accountNumber||!ifsc))return json({success:false,message:"Bank details are required."},400);
-  const fresh=await env.DB.prepare("SELECT wallet_balance FROM users WHERE id=?").bind(u.id).first(), bal=Number(fresh?.wallet_balance||0);
-  if(bal<amount)return json({success:false,message:"Insufficient wallet balance."},400);
-  const t=now();
-  // Atomic enough for D1 single request: condition prevents negative balance.
-  const deduct=await env.DB.prepare("UPDATE users SET wallet_balance=wallet_balance-? WHERE id=? AND wallet_balance>=?").bind(amount,u.id,amount).run();
-  if(!deduct.meta?.changes)return json({success:false,message:"Insufficient wallet balance."},409);
-  const ins=await env.DB.prepare(
-    `INSERT INTO withdrawals(user_id,amount,status,method,account_name,account_number,ifsc,upi_id,note,created_at,updated_at)
-     VALUES(?,?,?,?,?,?,?,?,?,?,?)`
-  ).bind(u.id,amount,"pending",method,accountName,accountNumber,ifsc,upi,"",t,t).run();
-  await env.DB.prepare("INSERT INTO transactions(user_id,type,amount,direction,status,reference_id,description,created_at) VALUES(?,?,?,?,?,?,?,?)")
-    .bind(u.id,"withdrawal",amount,"debit","pending",String(ins.meta.last_row_id),"Withdrawal request",t).run();
-  return json({success:true,message:"Withdrawal request submitted.",withdrawal_id:ins.meta.last_row_id});
+  try{
+    const u=await requireUser(request,env), b=await request.json(), amount=Math.round(Number(b.amount)*100), method=text(b.method), details=text(b.account_details);
+    if(!Number.isFinite(amount)||amount<MIN_WITHDRAWAL) return json({success:false,message:"Minimum withdrawal is ₹1,000."},400);
+    if(!method||!details) return json({success:false,message:"Withdrawal method and account details are required."},400);
+    const fresh=await env.DB.prepare("SELECT wallet_balance FROM users WHERE id=?").bind(u.id).first();
+    if(Number(fresh?.wallet_balance||0)<amount) return json({success:false,message:"Insufficient wallet balance."},400);
+    await env.DB.prepare("UPDATE users SET wallet_balance=wallet_balance-? WHERE id=?").bind(amount,u.id).run();
+    await env.DB.prepare("INSERT INTO withdrawals(user_id,amount,method,account_details,status) VALUES(?,?,?,?,?)").bind(u.id,amount,method,details,"pending").run();
+    await env.DB.prepare("INSERT INTO transactions(user_id,type,amount,direction,status,reference_id,description) VALUES(?,?,?,?,?,?,?)").bind(u.id,"withdrawal",amount,"debit","pending",null,"Withdrawal request").run();
+    return json({success:true,message:"Withdrawal request submitted."});
+  }catch(e){return json({success:false,message:safeError(e)},e.status||500);}
+}
+async function withdrawals(request,env){
+  try{
+    const u=await requireUser(request,env);
+    const r=await env.DB.prepare("SELECT id,amount,method,status,created_at FROM withdrawals WHERE user_id=? ORDER BY id DESC LIMIT 50").bind(u.id).all();
+    return json({success:true,items:r.results||[]});
+  }catch(e){return json({success:false,message:safeError(e)},e.status||500);}
 }
 
-function adminOk(request,env){
-  const secret=env.ADMIN_SECRET; if(!secret)return false;
-  return request.headers.get("X-Admin-Secret")===secret;
-}
-async function adminOverview(request,env){
-  if(!adminOk(request,env))return json({success:false,message:"Admin authorization required."},401);
-  const [u,p,r,w,t]=await Promise.all([
-    env.DB.prepare("SELECT COUNT(*) count FROM users").first(),
-    env.DB.prepare("SELECT COUNT(*) count,COALESCE(SUM(amount),0) total FROM payments WHERE status='captured'").first(),
-    env.DB.prepare("SELECT COUNT(*) count,COALESCE(SUM(reward_amount),0) total FROM referrals WHERE status='completed'").first(),
-    env.DB.prepare("SELECT COUNT(*) count,COALESCE(SUM(amount),0) total FROM withdrawals WHERE status='pending'").first(),
-    env.DB.prepare("SELECT COUNT(*) count FROM transactions").first()
-  ]);
-  return json({success:true,users:u,payments:p,referrals:r,pendingWithdrawals:w,transactions:t});
-}
-async function adminWithdrawals(request,env){
-  if(!adminOk(request,env))return json({success:false,message:"Admin authorization required."},401);
-  const r=await env.DB.prepare(
-    `SELECT w.*,u.name,u.email,u.phone FROM withdrawals w LEFT JOIN users u ON u.id=w.user_id ORDER BY w.id DESC LIMIT 200`
-  ).all();
-  return json({success:true,withdrawals:r.results||[]});
-}
-async function adminWithdrawalStatus(request,env){
-  if(!adminOk(request,env))return json({success:false,message:"Admin authorization required."},401);
-  const b=await request.json(), id=Number(b.id), status=clean(b.status).toLowerCase(), note=clean(b.note);
-  if(!id||!["pending","approved","rejected"].includes(status))return json({success:false,message:"Invalid request."},400);
-  const w=await env.DB.prepare("SELECT * FROM withdrawals WHERE id=?").bind(id).first();
-  if(!w)return json({success:false,message:"Withdrawal not found."},404);
-  if(w.status===status)return json({success:true,message:"No change."});
-  const t=now();
-  if(w.status==="pending"&&status==="rejected"){
-    await env.DB.prepare("UPDATE users SET wallet_balance=wallet_balance+? WHERE id=?").bind(w.amount,w.user_id).run();
-    await env.DB.prepare("INSERT INTO transactions(user_id,type,amount,direction,status,reference_id,description,created_at) VALUES(?,?,?,?,?,?,?,?)")
-      .bind(w.user_id,"withdrawal_reversal",w.amount,"credit","completed",String(id),"Rejected withdrawal returned to wallet",t).run();
-  }
-  if(w.status==="rejected" && status==="approved")return json({success:false,message:"Rejected withdrawal cannot be approved directly."},400);
-  await env.DB.prepare("UPDATE withdrawals SET status=?,note=?,updated_at=? WHERE id=?").bind(status,note,t,id).run();
-  await env.DB.prepare("UPDATE transactions SET status=? WHERE reference_id=? AND type='withdrawal'").bind(status,String(id)).run();
-  return json({success:true,message:`Withdrawal ${status}.`});
-}
-async function adminPaymentStatus(request,env){
-  if(!adminOk(request,env))return json({success:false,message:"Admin authorization required."},401);
-  const b=await request.json(), id=Number(b.id), status=clean(b.status);
-  if(!id||!["pending","captured","failed","refunded"].includes(status))return json({success:false,message:"Invalid status."},400);
-  await env.DB.prepare("UPDATE payments SET status=? WHERE id=?").bind(status,id).run();
-  return json({success:true});
-}
-function escapeHtml(s){
-  return String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]));
-}
-function home(request,env,url){
-  return html(`<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>CashGrow — Digital Growth & Referral Platform</title>
-<meta name="description" content="CashGrow digital product and referral platform.">
+function home(){
+return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CashGrow — Grow smarter. Share. Earn.</title>
 <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
 <style>
-:root{--bg:#07111f;--card:#101d31;--card2:#14243d;--text:#f7fbff;--muted:#aab8cc;--accent:#35d07f;--accent2:#6ea8ff;--line:#243650;--danger:#ff6b6b}
-*{box-sizing:border-box}body{margin:0;font-family:Inter,Arial,sans-serif;background:#f6f8fb;color:#142033}a{text-decoration:none;color:inherit}
-.nav{position:sticky;top:0;z-index:20;background:rgba(7,17,31,.96);color:#fff;border-bottom:1px solid #20304a}.navin{max-width:1180px;margin:auto;display:flex;align-items:center;justify-content:space-between;padding:14px 18px}.logo{font-weight:900;font-size:25px;letter-spacing:-1px}.logo span{color:var(--accent)}.links{display:flex;gap:18px;align-items:center}.links a{color:#dbe7f7;font-size:14px}.btn{border:0;border-radius:12px;padding:12px 17px;font-weight:800;cursor:pointer}.btn.primary{background:var(--accent);color:#06120b}.btn.dark{background:#102037;color:#fff}.btn.light{background:#fff;color:#0d1a2b}.hero{background:linear-gradient(135deg,#07111f,#102b4b);color:#fff;padding:85px 18px}.heroIn{max-width:1180px;margin:auto;display:grid;grid-template-columns:1.2fr .8fr;gap:35px;align-items:center}.eyebrow{color:var(--accent);font-weight:900;text-transform:uppercase;letter-spacing:2px;font-size:12px}.hero h1{font-size:56px;line-height:1.02;margin:15px 0}.hero p{color:#c5d2e3;font-size:18px;line-height:1.7}.heroCard{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);border-radius:24px;padding:28px}.price{font-size:40px;font-weight:900}.section{max-width:1180px;margin:auto;padding:70px 18px}.section h2{text-align:center;font-size:36px;margin:0 0 12px}.lead{text-align:center;color:#66758a;max-width:700px;margin:0 auto 35px;line-height:1.7}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}.card{background:#fff;border:1px solid #e4eaf2;border-radius:20px;padding:25px;box-shadow:0 10px 35px rgba(16,32,51,.06)}.card h3{margin-top:0}.muted{color:#718096}.package{position:relative}.package.featured{border:2px solid var(--accent)}.package .tag{position:absolute;right:18px;top:18px;background:#e9fff2;color:#07843f;border-radius:999px;padding:6px 10px;font-size:11px;font-weight:900}.package ul{padding-left:20px;line-height:2;color:#526176}.steps .card{text-align:center}.icon{font-size:34px}.faq details{background:#fff;border:1px solid #e3e9f1;border-radius:14px;padding:17px;margin:10px 0}.auth{background:#0b1728;color:#fff}.authBox{max-width:520px;margin:auto;background:#fff;color:#172236;border-radius:22px;padding:24px}.input{width:100%;padding:13px;border:1px solid #d7dfeb;border-radius:11px;margin:6px 0;font-size:15px}.tabs{display:flex;gap:8px}.tabs button{flex:1}.dash{display:none}.dashGrid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.stat{background:#f1f6fb;border-radius:15px;padding:16px}.stat b{font-size:23px}.tableWrap{overflow:auto}.table{width:100%;border-collapse:collapse;font-size:13px}.table th,.table td{padding:10px;border-bottom:1px solid #e6ebf1;text-align:left;white-space:nowrap}.footer{background:#07111f;color:#c6d2e1;padding:45px 18px}.footerIn{max-width:1180px;margin:auto;display:grid;grid-template-columns:2fr 1fr 1fr;gap:30px}.modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:100;align-items:center;justify-content:center;padding:18px}.modalBox{background:#fff;border-radius:20px;max-width:520px;width:100%;padding:25px;max-height:90vh;overflow:auto}.notice{padding:12px;border-radius:10px;margin:8px 0;font-weight:700}.success{background:#e9fff2;color:#06753a}.error{background:#fff0f0;color:#a11}.small{font-size:12px;color:#748198}@media(max-width:800px){.links{display:none}.heroIn{grid-template-columns:1fr}.hero h1{font-size:42px}.grid{grid-template-columns:1fr}.dashGrid{grid-template-columns:repeat(2,1fr)}.footerIn{grid-template-columns:1fr}.section{padding:50px 16px}}
-</style></head><body>
-<nav class="nav"><div class="navin"><div class="logo">Cash<span>Grow</span></div><div class="links">
-<a href="#home">Home</a><a href="#packages">Packages</a><a href="#how">How It Works</a><a href="#referral">Referral</a><a href="#faq">FAQ</a><button class="btn primary" onclick="openAuth('login')">Login</button>
+:root{
+  --cg-green:#0b3d2e;
+  --cg-green2:#0f6b45;
+  --cg-lime:#7ee22a;
+  --cg-gold:#f7c948;
+  --cg-gold2:#ffdf78;
+  --cg-ink:#071b14;
+  --cg-muted:#66756f;
+  --cg-bg:#f4f8f5;
+  --cg-white:#ffffff;
+  --cg-border:rgba(11,61,46,.12);
+  --cg-shadow:0 18px 55px rgba(7,27,20,.10);
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0;
+  font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;
+  color:var(--cg-ink);
+  background:
+    radial-gradient(circle at 10% 0%,rgba(126,226,42,.09),transparent 28%),
+    radial-gradient(circle at 90% 8%,rgba(247,201,72,.11),transparent 25%),
+    var(--cg-bg);
+}
+a{text-decoration:none;color:inherit}
+.nav{
+  position:sticky;top:0;z-index:50;
+  background:rgba(4,29,21,.94);
+  backdrop-filter:blur(16px);
+  border-bottom:1px solid rgba(247,201,72,.18);
+  box-shadow:0 8px 30px rgba(0,0,0,.12);
+}
+.navin{
+  max-width:1180px;margin:auto;padding:10px 20px;
+  display:flex;align-items:center;justify-content:space-between;gap:20px;
+}
+.brand{display:flex;align-items:center;gap:11px;color:#fff;font-size:22px;font-weight:950;letter-spacing:-.5px}
+.brand img{width:48px;height:48px;object-fit:contain;border-radius:12px}
+.brandText span:first-child{color:var(--cg-gold)}
+.brandText span:last-child{color:var(--cg-lime)}
+.links{display:flex;gap:18px;flex-wrap:wrap;font-size:13px;font-weight:800;color:#e8f5ee}
+.links a{opacity:.9;transition:.2s}
+.links a:hover{color:var(--cg-gold);opacity:1}
+.hero{
+  position:relative;overflow:hidden;color:#fff;text-align:center;
+  padding:76px 20px 72px;
+  background:
+    radial-gradient(circle at 50% 0%,rgba(126,226,42,.22),transparent 34%),
+    radial-gradient(circle at 80% 70%,rgba(247,201,72,.14),transparent 30%),
+    linear-gradient(145deg,#031d15 0%,#073d2b 48%,#0a241b 100%);
+  border-bottom:1px solid rgba(247,201,72,.18);
+}
+.hero:before,.hero:after{
+  content:"";position:absolute;border-radius:50%;filter:blur(2px);pointer-events:none;
+}
+.hero:before{width:280px;height:280px;background:rgba(126,226,42,.08);left:-120px;top:-100px}
+.hero:after{width:320px;height:320px;background:rgba(247,201,72,.07);right:-140px;bottom:-160px}
+.heroLogo{
+  width:min(220px,58vw);height:auto;display:block;margin:0 auto 18px;
+  filter:drop-shadow(0 14px 30px rgba(0,0,0,.35));
+}
+.hero h1{font-size:clamp(38px,7vw,62px);line-height:1.02;margin:0 0 14px;letter-spacing:-2px}
+.hero h1 .gold{color:var(--cg-gold)}
+.hero p{font-size:18px;line-height:1.65;margin:0 auto 26px;max-width:700px;color:#d9eee4}
+.cta{
+  display:inline-flex;align-items:center;justify-content:center;
+  background:linear-gradient(135deg,var(--cg-gold2),var(--cg-gold));
+  color:#183427;padding:14px 23px;border-radius:14px;font-weight:950;
+  box-shadow:0 10px 30px rgba(247,201,72,.24);
+  border:1px solid rgba(255,255,255,.35);
+}
+.wrap{max-width:1180px;margin:auto;padding:34px 20px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:20px}
+.card,.panel{
+  background:rgba(255,255,255,.94);
+  border:1px solid var(--cg-border);
+  border-radius:22px;padding:26px;
+  box-shadow:var(--cg-shadow);
+  margin-bottom:20px;
+}
+.card{position:relative;overflow:hidden;transition:transform .2s,box-shadow .2s}
+.card:hover{transform:translateY(-4px);box-shadow:0 24px 60px rgba(7,27,20,.14)}
+.card:before{
+  content:"";position:absolute;left:0;top:0;right:0;height:4px;
+  background:linear-gradient(90deg,var(--cg-gold),var(--cg-lime));
+}
+.price{font-size:40px;font-weight:950;margin:14px 0;color:var(--cg-green)}
+.btn{
+  width:100%;border:0;border-radius:13px;padding:14px;
+  background:linear-gradient(135deg,var(--cg-green2),var(--cg-green));
+  color:#fff;font-weight:900;font-size:16px;cursor:pointer;
+  box-shadow:0 9px 22px rgba(11,61,46,.18);
+}
+.btn:hover{filter:brightness(1.08)}
+.btn.secondary{background:#092319}
+.input{
+  width:100%;padding:13px 14px;margin:7px 0;
+  border:1px solid #d6e2dc;border-radius:12px;font-size:15px;
+  background:#fbfdfc;outline:none;
+}
+.input:focus{border-color:var(--cg-green2);box-shadow:0 0 0 3px rgba(15,107,69,.10)}
+.section{padding:42px 0}
+.section h2{text-align:center;font-size:34px;line-height:1.15;margin:0 0 24px;color:var(--cg-green);letter-spacing:-.8px}
+.section h2:after{
+  content:"";display:block;width:58px;height:4px;border-radius:10px;
+  margin:11px auto 0;background:linear-gradient(90deg,var(--cg-gold),var(--cg-lime));
+}
+.muted{color:var(--cg-muted)}
+.steps{counter-reset:s}
+.step{
+  padding:20px;border:1px solid var(--cg-border);border-radius:18px;
+  background:#fff;box-shadow:0 10px 28px rgba(7,27,20,.06)
+}
+.step b{display:block;margin-bottom:7px;color:var(--cg-green)}
+.faq{border-bottom:1px solid #e1e9e4;padding:17px 0}
+.faq summary{font-weight:850;cursor:pointer;color:var(--cg-green)}
+.account{max-width:620px;margin:25px auto}
+.tabs{display:flex;gap:8px;margin-bottom:12px}
+.tabs button{flex:1;border:0;padding:11px;border-radius:11px;font-weight:850;background:#e9f1ed;color:var(--cg-green);cursor:pointer}
+.tabs .active{background:linear-gradient(135deg,var(--cg-green2),var(--cg-green))!important;color:#fff}
+.active{background:var(--cg-green)!important;color:#fff}
+.hidden{display:none}
+.wallet{font-size:38px;font-weight:950;text-align:center;color:var(--cg-green)}
+.refbox{
+  background:linear-gradient(135deg,#eff9e9,#fff8df);
+  border:1px solid rgba(247,201,72,.35);
+  border-radius:16px;padding:18px;text-align:center;
+  font-size:22px;font-weight:950;letter-spacing:2px;color:var(--cg-green)
+}
+.footer{
+  background:linear-gradient(145deg,#031d15,#082e21);
+  color:#fff;padding:45px 20px;border-top:1px solid rgba(247,201,72,.18)
+}
+.footerin{max-width:1180px;margin:auto}
+.footerBrand{display:flex;align-items:center;gap:12px}
+.footerBrand img{width:58px;height:58px;border-radius:14px}
+.footerBrand strong{font-size:26px}.footerBrand .gold{color:var(--cg-gold)}.footerBrand .lime{color:var(--cg-lime)}
+.small{font-size:13px;color:#c8d9d1}
+.notice{padding:12px 14px;border-radius:11px;background:#edf4f0;margin-top:10px}
+.success{color:#16803c;font-weight:850}.danger{color:#b42318;font-weight:850}
+.trustbar{
+  display:grid;grid-template-columns:repeat(3,1fr);gap:12px;
+  max-width:900px;margin:-24px auto 8px;position:relative;z-index:5;padding:0 20px
+}
+.trustitem{
+  background:#fff;border:1px solid var(--cg-border);border-radius:16px;
+  padding:14px;text-align:center;box-shadow:0 10px 30px rgba(7,27,20,.08)
+}
+.trustitem b{display:block;color:var(--cg-green);font-size:14px}.trustitem span{font-size:12px;color:var(--cg-muted)}
+@media(max-width:760px){
+  .links{display:none}.hero{padding:58px 16px}.heroLogo{width:180px}
+  .hero h1{font-size:40px}.wrap{padding:25px 15px}.section{padding:30px 0}
+  .trustbar{grid-template-columns:1fr;margin-top:-14px}
+}
+</style>
+<link rel="icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA1MTIgNTEyIj48ZGVmcz48bGluZWFyR3JhZGllbnQgaWQ9ImciIHgxPSIwIiB4Mj0iMSI+PHN0b3Agc3RvcC1jb2xvcj0iI2Y3Yzk0OCIvPjxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzdlZTIyYSIvPjwvbGluZWFyR3JhZGllbnQ+PC9kZWZzPjxyZWN0IHdpZHRoPSI1MTIiIGhlaWdodD0iNTEyIiByeD0iODAiIGZpbGw9IiMwNDFkMTUiLz48cGF0aCBkPSJNOTUgMjYwYy0yMC0xMDAgNjUtMTc1IDE2MC0xNjBsLTQ1IDUwYy00NS00LTgyIDMwLTgyIDc1IDAgMjQgOSA0NiAyNSA2MmwtNDUgNDVjLTctMjAtMTItNDUtMTMtNzJ6IiBmaWxsPSIjZjdjOTQ4Ii8+PHBhdGggZD0iTTE0NSAzNTBsNDUtNDggMzUgMzUgNjUtMTA1IDI4IDI5IDc1LTk4LTEzIDgwLTYyIDY1LTI3LTI4LTY1IDEwNS0zNi0zNS00NSA0OHoiIGZpbGw9InVybCgjZykiLz48cGF0aCBkPSJNMjc4IDEwNWg3MnYxODBoLTcyeiIgZmlsbD0iIzdlZTIyYSIgb3BhY2l0eT0iLjkiLz48cGF0aCBkPSJNMjA1IDE2MGg3MnYxMzBoLTcyeiIgZmlsbD0iIzM5YjU0YSIgb3BhY2l0eT0iLjkiLz48dGV4dCB4PSIyNTYiIHk9IjQzMCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1mYW1pbHk9IkFyaWFsLHNhbnMtc2VyaWYiIGZvbnQtc2l6ZT0iNTgiIGZvbnQtd2VpZ2h0PSI5MDAiIGZpbGw9IiNmN2M5NDgiPkNhc2g8dHNwYW4gZmlsbD0iIzdlZTIyYSI+R3JvdzwvdHNwYW4+PC90ZXh0Pjwvc3ZnPg=="></head>
+<body>
+<nav class="nav"><div class="navin">
+<div class="brand">
+<img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA1MTIgNTEyIj48ZGVmcz48bGluZWFyR3JhZGllbnQgaWQ9ImciIHgxPSIwIiB4Mj0iMSI+PHN0b3Agc3RvcC1jb2xvcj0iI2Y3Yzk0OCIvPjxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzdlZTIyYSIvPjwvbGluZWFyR3JhZGllbnQ+PC9kZWZzPjxyZWN0IHdpZHRoPSI1MTIiIGhlaWdodD0iNTEyIiByeD0iODAiIGZpbGw9IiMwNDFkMTUiLz48cGF0aCBkPSJNOTUgMjYwYy0yMC0xMDAgNjUtMTc1IDE2MC0xNjBsLTQ1IDUwYy00NS00LTgyIDMwLTgyIDc1IDAgMjQgOSA0NiAyNSA2MmwtNDUgNDVjLTctMjAtMTItNDUtMTMtNzJ6IiBmaWxsPSIjZjdjOTQ4Ii8+PHBhdGggZD0iTTE0NSAzNTBsNDUtNDggMzUgMzUgNjUtMTA1IDI4IDI5IDc1LTk4LTEzIDgwLTYyIDY1LTI3LTI4LTY1IDEwNS0zNi0zNS00NSA0OHoiIGZpbGw9InVybCgjZykiLz48cGF0aCBkPSJNMjc4IDEwNWg3MnYxODBoLTcyeiIgZmlsbD0iIzdlZTIyYSIgb3BhY2l0eT0iLjkiLz48cGF0aCBkPSJNMjA1IDE2MGg3MnYxMzBoLTcyeiIgZmlsbD0iIzM5YjU0YSIgb3BhY2l0eT0iLjkiLz48dGV4dCB4PSIyNTYiIHk9IjQzMCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1mYW1pbHk9IkFyaWFsLHNhbnMtc2VyaWYiIGZvbnQtc2l6ZT0iNTgiIGZvbnQtd2VpZ2h0PSI5MDAiIGZpbGw9IiNmN2M5NDgiPkNhc2g8dHNwYW4gZmlsbD0iIzdlZTIyYSI+R3JvdzwvdHNwYW4+PC90ZXh0Pjwvc3ZnPg==" alt="CashGrow logo">
+<div class="brandText"><span>Cash</span><span>Grow</span></div>
+</div>
+<div class="links">
+<a href="#home">Home</a><a href="#packages">Packages</a><a href="#how">How It Works</a><a href="#referral">Referral</a><a href="#about">About</a><a href="#faq">FAQ</a><a href="#contact">Contact</a>
 </div></div></nav>
-<section class="hero" id="home"><div class="heroIn"><div><div class="eyebrow">Digital Growth Platform</div><h1>Grow smarter. Share. Earn.</h1><p>Discover practical digital bundles and a transparent referral reward system built for CashGrow members.</p><div style="display:flex;gap:10px;flex-wrap:wrap"><a class="btn primary" href="#packages">Explore Packages</a><button class="btn light" onclick="openAuth('register')">Create Account</button></div></div>
-<div class="heroCard"><div class="eyebrow">CashGrow Starter</div><div class="price">₹599</div><p>Digital Starter Bundle</p><hr style="border-color:#29405f"><p>Referral reward: <b>₹400</b> when an eligible referred purchase is successfully captured.</p></div></div></section>
-<section class="section" id="packages"><h2>Choose Your Package</h2><p class="lead">Simple pricing, clear referral rewards and a dashboard to track your activity.</p><div class="grid">
-<div class="card package"><h3>Starter Bundle</h3><div class="price">₹599</div><p class="muted">For getting started.</p><ul><li>Digital product bundle</li><li>Member dashboard</li><li>Referral tools</li><li>Referral reward ₹400*</li></ul><button class="btn primary" style="width:100%" onclick="buy('starter')">Buy Starter — ₹599</button></div>
-<div class="card package featured"><div class="tag">POPULAR</div><h3>Pro Bundle</h3><div class="price">₹999</div><p class="muted">For creators and active members.</p><ul><li>Digital product bundle</li><li>Member dashboard</li><li>Referral tools</li><li>Referral reward ₹800*</li></ul><button class="btn primary" style="width:100%" onclick="buy('pro')">Buy Pro — ₹999</button></div>
-<div class="card"><h3>Member Benefits</h3><p class="muted">Track your purchases, referrals, cashback credits, wallet and withdrawal requests from one place.</p><ul><li>Secure account</li><li>Payment history</li><li>Referral history</li><li>Wallet ledger</li></ul></div></div><p class="small" style="text-align:center;margin-top:18px">*Referral rewards apply only to eligible successful captured purchases under the program rules.</p></section>
-<section class="section steps" id="how"><h2>How It Works</h2><p class="lead">Four simple steps.</p><div class="grid"><div class="card"><div class="icon">01</div><h3>Create Account</h3><p class="muted">Register with your mobile/email and password.</p></div><div class="card"><div class="icon">02</div><h3>Choose a Bundle</h3><p class="muted">Select Starter ₹599 or Pro ₹999 and pay securely through Razorpay.</p></div><div class="card"><div class="icon">03</div><h3>Share Referral</h3><p class="muted">Share your unique referral link with people you invite.</p></div><div class="card"><div class="icon">04</div><h3>Track Rewards</h3><p class="muted">Eligible referral cashback is credited to your CashGrow wallet.</p></div></div></section>
-<section class="section" id="referral"><h2>Referral Program</h2><p class="lead">Your referral code is created automatically when you register.</p><div class="grid"><div class="card"><h3>₹599 Starter</h3><div class="price">₹400</div><p class="muted">Eligible referral cashback.</p></div><div class="card"><h3>₹999 Pro</h3><div class="price">₹800</div><p class="muted">Eligible referral cashback.</p></div><div class="card"><h3>Wallet</h3><div class="price">₹1,000</div><p class="muted">Minimum withdrawal amount.</p></div></div></section>
-<section class="section"><h2>About CashGrow</h2><p class="lead">CashGrow is designed as a digital-product and referral platform. Members can purchase digital bundles, use their referral code, view eligible rewards and request withdrawals subject to the platform rules.</p><div class="grid"><div class="card"><h3>Transparent</h3><p class="muted">Payment and wallet activity is recorded in your account.</p></div><div class="card"><h3>Secure</h3><p class="muted">Passwords are hashed and payment signatures are verified server-side.</p></div><div class="card"><h3>Mobile First</h3><p class="muted">Designed for smooth use on phones as well as desktop.</p></div></div></section>
-<section class="section faq" id="faq"><h2>Frequently Asked Questions</h2><div style="max-width:850px;margin:auto"><details><summary><b>How does referral cashback work?</b></summary><p class="muted">When an eligible referred member completes a captured purchase, the configured referral reward is credited once to the referrer.</p></details><details><summary><b>What is the minimum withdrawal?</b></summary><p class="muted">The current minimum withdrawal is ₹1,000.</p></details><details><summary><b>Can the same payment earn twice?</b></summary><p class="muted">No. The system protects against duplicate payment rewards.</p></details><details><summary><b>How are payments processed?</b></summary><p class="muted">Payments are processed through Razorpay and verified on the server using the Razorpay signature and payment status.</p></details><details><summary><b>How do I reset my password?</b></summary><p class="muted">Use Forgot Password. If email delivery is configured, a reset link is sent to your registered email.</p></details></div></section>
-<section class="section" id="contact"><h2>Contact Us</h2><p class="lead">For support, use the official CashGrow support email configured by the site owner. Replace the placeholder contact details below before public launch.</p><div class="card" style="max-width:650px;margin:auto"><p><b>Email:</b> support@cashgrow.example</p><p><b>Support:</b> Please use your official support channel.</p><p class="small">Replace these placeholders with your real business contact details before launch.</p></div></section>
-<section class="section"><h2>Terms & Policies</h2><div class="grid"><div class="card"><h3>Terms & Conditions</h3><p class="muted">Use of CashGrow is subject to applicable law, accurate account information, successful payment verification, referral eligibility rules and responsible use of the platform.</p></div><div class="card"><h3>Privacy Policy</h3><p class="muted">CashGrow stores account, payment, referral and withdrawal information needed to operate the service. Passwords are stored as cryptographic hashes.</p></div><div class="card"><h3>Refund & Cancellation</h3><p class="muted">Refunds, cancellations and digital-product eligibility are subject to the published business policy and applicable consumer law. Review and replace this template with your final legal policy.</p></div><div class="card"><h3>Disclaimer</h3><p class="muted">Referral rewards are not guaranteed income. Eligibility depends on valid transactions and the program rules. This website should not be presented as a promise of profit or guaranteed returns.</p></div></div></section>
-<section class="section auth" id="account"><div class="authBox" id="authBox"><h2 id="authTitle">CashGrow Account</h2><div class="tabs"><button class="btn dark" onclick="showLogin()">Login</button><button class="btn" onclick="showRegister()">Create Account</button></div><div id="authMsg"></div>
-<div id="loginForm"><input class="input" id="loginId" placeholder="Email or Mobile Number"><input class="input" id="loginPw" type="password" placeholder="Password"><button class="btn primary" style="width:100%" onclick="login()">Login</button><button class="btn light" style="width:100%;margin-top:8px" onclick="showForgot()">Forgot Password?</button></div>
-<div id="registerForm" style="display:none"><input class="input" id="regName" placeholder="Full Name"><input class="input" id="regPhone" placeholder="Mobile Number"><input class="input" id="regEmail" placeholder="Email"><input class="input" id="regPw" type="password" placeholder="Password (6+ characters)"><input class="input" id="regRef" placeholder="Referral Code (optional)"><button class="btn primary" style="width:100%" onclick="register()">Create Account</button></div>
-<div id="forgotForm" style="display:none"><input class="input" id="forgotId" placeholder="Email or Mobile Number"><button class="btn primary" style="width:100%" onclick="forgot()">Send Reset</button><button class="btn light" style="width:100%;margin-top:8px" onclick="showLogin()">Back to Login</button></div></div>
-<div class="authBox dash" id="dashboard"><h2>My Dashboard</h2><div class="dashGrid"><div class="stat"><small>Wallet</small><br><b id="dWallet">₹0</b></div><div class="stat"><small>Referrals</small><br><b id="dRefs">0</b></div><div class="stat"><small>Referral Earnings</small><br><b id="dEarn">₹0</b></div><div class="stat"><small>Referral Code</small><br><b id="dCode">-</b></div></div>
-<p><b>Referral Link</b></p><input class="input" id="dLink" readonly><button class="btn light" onclick="copyReferral()">Copy Referral Link</button>
-<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:18px"><button class="btn dark" onclick="loadDash()">Refresh</button><button class="btn primary" onclick="openWithdraw()">Withdraw</button><button class="btn light" onclick="openProfile()">Profile</button><button class="btn light" onclick="logout()">Logout</button></div>
-<h3>Purchase History</h3><div class="tableWrap"><table class="table"><thead><tr><th>Product</th><th>Amount</th><th>Status</th><th>Date</th></tr></thead><tbody id="paymentsBody"></tbody></table></div>
-<h3>Transactions</h3><div class="tableWrap"><table class="table"><thead><tr><th>Type</th><th>Amount</th><th>Direction</th><th>Status</th><th>Date</th></tr></thead><tbody id="txBody"></tbody></table></div>
-<h3>Withdrawals</h3><div class="tableWrap"><table class="table"><thead><tr><th>Amount</th><th>Status</th><th>Method</th><th>Date</th></tr></thead><tbody id="wdBody"></tbody></table></div>
+
+<section id="home" class="hero">
+<img class="heroLogo" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA1MTIgNTEyIj48ZGVmcz48bGluZWFyR3JhZGllbnQgaWQ9ImciIHgxPSIwIiB4Mj0iMSI+PHN0b3Agc3RvcC1jb2xvcj0iI2Y3Yzk0OCIvPjxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzdlZTIyYSIvPjwvbGluZWFyR3JhZGllbnQ+PC9kZWZzPjxyZWN0IHdpZHRoPSI1MTIiIGhlaWdodD0iNTEyIiByeD0iODAiIGZpbGw9IiMwNDFkMTUiLz48cGF0aCBkPSJNOTUgMjYwYy0yMC0xMDAgNjUtMTc1IDE2MC0xNjBsLTQ1IDUwYy00NS00LTgyIDMwLTgyIDc1IDAgMjQgOSA0NiAyNSA2MmwtNDUgNDVjLTctMjAtMTItNDUtMTMtNzJ6IiBmaWxsPSIjZjdjOTQ4Ii8+PHBhdGggZD0iTTE0NSAzNTBsNDUtNDggMzUgMzUgNjUtMTA1IDI4IDI5IDc1LTk4LTEzIDgwLTYyIDY1LTI3LTI4LTY1IDEwNS0zNi0zNS00NSA0OHoiIGZpbGw9InVybCgjZykiLz48cGF0aCBkPSJNMjc4IDEwNWg3MnYxODBoLTcyeiIgZmlsbD0iIzdlZTIyYSIgb3BhY2l0eT0iLjkiLz48cGF0aCBkPSJNMjA1IDE2MGg3MnYxMzBoLTcyeiIgZmlsbD0iIzM5YjU0YSIgb3BhY2l0eT0iLjkiLz48dGV4dCB4PSIyNTYiIHk9IjQzMCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1mYW1pbHk9IkFyaWFsLHNhbnMtc2VyaWYiIGZvbnQtc2l6ZT0iNTgiIGZvbnQtd2VpZ2h0PSI5MDAiIGZpbGw9IiNmN2M5NDgiPkNhc2g8dHNwYW4gZmlsbD0iIzdlZTIyYSI+R3JvdzwvdHNwYW4+PC90ZXh0Pjwvc3ZnPg==" alt="CashGrow — Grow smarter. Share. Earn.">
+<h1><span class="gold">Grow smarter.</span> Share. Earn.</h1>
+<p>A premium digital-products and referral platform built with a clean, transparent and mobile-first experience.</p>
+<a class="cta" href="#packages">Explore Packages →</a>
+</section>
+<div class="trustbar">
+<div class="trustitem"><b>Secure Payments</b><span>Razorpay checkout & server verification</span></div>
+<div class="trustitem"><b>Smart Referral</b><span>Track eligible rewards in your wallet</span></div>
+<div class="trustitem"><b>Mobile First</b><span>Designed for a smooth phone experience</span></div>
+</div>
+
+<div class="wrap">
+<section id="account" class="section">
+<div class="panel account">
+<h2>CashGrow Account</h2>
+<div class="tabs"><button id="loginTab" class="active" onclick="showLogin()">Login</button><button id="regTab" onclick="showRegister()">Create Account</button></div>
+<div id="loginForm">
+<input id="loginId" class="input" placeholder="Email or Mobile Number">
+<input id="loginPass" class="input" type="password" placeholder="Password">
+<button class="btn secondary" onclick="login()">Login</button>
+</div>
+<div id="regForm" class="hidden">
+<input id="regName" class="input" placeholder="Full Name">
+<input id="regPhone" class="input" placeholder="Mobile Number">
+<input id="regEmail" class="input" type="email" placeholder="Email">
+<input id="regPass" class="input" type="password" placeholder="Password (minimum 6 characters)">
+<input id="regRef" class="input" placeholder="Referral Code (optional)">
+<button class="btn" onclick="register()">Create Account</button>
+</div>
+<div id="authMsg" class="notice"></div>
+</div>
+<div id="dashboard" class="panel account hidden">
+<h2>Your Dashboard</h2><p id="welcome"></p><div class="wallet" id="wallet">₹0.00</div>
+<p class="muted" style="text-align:center">Wallet balance</p>
+<div class="refbox" id="myRef">-</div><p class="muted" style="text-align:center">Your referral code</p>
+<input id="profileName" class="input" placeholder="Name"><input id="profilePhone" class="input" placeholder="Phone">
+<button class="btn secondary" onclick="saveProfile()">Save Profile</button>
+<div style="height:10px"></div>
+<input id="withdrawAmount" class="input" type="number" placeholder="Withdrawal amount (₹)">
+<input id="withdrawMethod" class="input" placeholder="Method (UPI/Bank)">
+<input id="withdrawDetails" class="input" placeholder="UPI ID / Bank details">
+<button class="btn" onclick="requestWithdrawal()">Request Withdrawal</button>
+<div id="dashMsg" class="notice"></div><button class="btn secondary" style="margin-top:10px" onclick="logout()">Logout</button>
+</div>
+</section>
+
+<section id="packages" class="section"><h2>Choose Your Package</h2>
+<div class="grid">
+<div class="card"><h3>Starter Bundle</h3><p class="muted">Digital Creator Starter Bundle</p><div class="price">₹599</div><p>Referral reward: <b>₹400</b></p><button class="btn" onclick="buy('starter',event)">Buy Starter</button></div>
+<div class="card"><h3>Pro Bundle</h3><p class="muted">Digital Creator Pro Bundle</p><div class="price">₹999</div><p>Referral reward: <b>₹800</b></p><button class="btn" onclick="buy('pro',event)">Buy Pro</button></div>
+</div><div id="payMsg" class="notice"></div></section>
+
+<section id="how" class="section"><h2>How It Works</h2><div class="grid">
+<div class="step"><b>1. Create your account</b><span class="muted">Register with your name, mobile and email.</span></div>
+<div class="step"><b>2. Choose a package</b><span class="muted">Select the ₹599 Starter or ₹999 Pro bundle.</span></div>
+<div class="step"><b>3. Share your referral</b><span class="muted">Share your personal referral code with eligible customers.</span></div>
+<div class="step"><b>4. Earn referral rewards</b><span class="muted">A qualifying referred purchase can credit the applicable reward.</span></div>
 </div></section>
-<footer class="footer"><div class="footerIn"><div><div class="logo">Cash<span>Grow</span></div><p>Digital products, member tools and referral tracking in one platform.</p></div><div><b>Explore</b><p><a href="#packages">Packages</a></p><p><a href="#referral">Referral Program</a></p><p><a href="#faq">FAQ</a></p></div><div><b>Policies</b><p>Terms & Conditions</p><p>Privacy Policy</p><p>Refund Policy</p><p>Disclaimer</p></div></div><p style="max-width:1180px;margin:30px auto 0;border-top:1px solid #21334d;padding-top:20px">© ${new Date().getFullYear()} CashGrow. All rights reserved.</p></footer>
-<div class="modal" id="modal"><div class="modalBox"><div id="modalContent"></div></div></div>
+
+<section id="referral" class="section"><h2>Referral Program</h2><div class="grid">
+<div class="card"><h3>Starter Referral</h3><div class="price">₹400</div><p class="muted">Reward for a qualifying ₹599 referred purchase.</p></div>
+<div class="card"><h3>Pro Referral</h3><div class="price">₹800</div><p class="muted">Reward for a qualifying ₹999 referred purchase.</p></div>
+<div class="card"><h3>Minimum Withdrawal</h3><div class="price">₹1,000</div><p class="muted">Wallet withdrawals start from ₹1,000, subject to verification and terms.</p></div>
+</div></section>
+
+<section id="about" class="section"><h2>About CashGrow</h2><div class="panel"><p>CashGrow is a digital-products and referral platform designed to make product access and referral tracking simple. Payments are processed through Razorpay and verified on the server before qualifying rewards are credited.</p><p class="muted">Rewards are subject to the applicable program terms, payment verification, anti-fraud checks and account eligibility.</p></div></section>
+
+<section id="faq" class="section"><h2>Frequently Asked Questions</h2><div class="panel">
+<details class="faq"><summary>How do I create an account?</summary><p class="muted">Use Create Account above and complete the required fields.</p></details>
+<details class="faq"><summary>What are the package prices?</summary><p class="muted">Starter is ₹599 and Pro is ₹999.</p></details>
+<details class="faq"><summary>How is a referral reward credited?</summary><p class="muted">The payment is verified first. If the referral code is valid and eligible, the applicable reward is credited to the referrer's wallet.</p></details>
+<details class="faq"><summary>What is the minimum withdrawal?</summary><p class="muted">₹1,000.</p></details>
+<details class="faq"><summary>Can I withdraw immediately after a purchase?</summary><p class="muted">Withdrawals depend on your available wallet balance and the platform's verification and withdrawal process.</p></details>
+</div></section>
+
+<section id="contact" class="section"><h2>Contact</h2><div class="panel"><p><b>CashGrow Support</b></p><p class="muted">For account, payment or withdrawal support, use the support contact provided by CashGrow before launch.</p></div></section>
+
+<section id="policies" class="section"><h2>Terms & Policies</h2><div class="grid">
+<div class="card"><h3>Terms</h3><p class="muted">Use the platform lawfully. Payments, rewards and withdrawals are subject to verification, eligibility and applicable terms.</p></div>
+<div class="card"><h3>Privacy</h3><p class="muted">Account and payment-related information is used to provide the service, process transactions and maintain security.</p></div>
+<div class="card"><h3>Refund</h3><p class="muted">Refunds are handled according to the applicable product, payment and CashGrow refund policy.</p></div>
+<div class="card"><h3>Disclaimer</h3><p class="muted">Referral rewards are not guaranteed income. Eligibility and reward credit depend on verified qualifying activity.</p></div>
+</div></section>
+</div>
+
+<footer class="footer"><div class="footerin">
+<div class="footerBrand"><img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA1MTIgNTEyIj48ZGVmcz48bGluZWFyR3JhZGllbnQgaWQ9ImciIHgxPSIwIiB4Mj0iMSI+PHN0b3Agc3RvcC1jb2xvcj0iI2Y3Yzk0OCIvPjxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzdlZTIyYSIvPjwvbGluZWFyR3JhZGllbnQ+PC9kZWZzPjxyZWN0IHdpZHRoPSI1MTIiIGhlaWdodD0iNTEyIiByeD0iODAiIGZpbGw9IiMwNDFkMTUiLz48cGF0aCBkPSJNOTUgMjYwYy0yMC0xMDAgNjUtMTc1IDE2MC0xNjBsLTQ1IDUwYy00NS00LTgyIDMwLTgyIDc1IDAgMjQgOSA0NiAyNSA2MmwtNDUgNDVjLTctMjAtMTItNDUtMTMtNzJ6IiBmaWxsPSIjZjdjOTQ4Ii8+PHBhdGggZD0iTTE0NSAzNTBsNDUtNDggMzUgMzUgNjUtMTA1IDI4IDI5IDc1LTk4LTEzIDgwLTYyIDY1LTI3LTI4LTY1IDEwNS0zNi0zNS00NSA0OHoiIGZpbGw9InVybCgjZykiLz48cGF0aCBkPSJNMjc4IDEwNWg3MnYxODBoLTcyeiIgZmlsbD0iIzdlZTIyYSIgb3BhY2l0eT0iLjkiLz48cGF0aCBkPSJNMjA1IDE2MGg3MnYxMzBoLTcyeiIgZmlsbD0iIzM5YjU0YSIgb3BhY2l0eT0iLjkiLz48dGV4dCB4PSIyNTYiIHk9IjQzMCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1mYW1pbHk9IkFyaWFsLHNhbnMtc2VyaWYiIGZvbnQtc2l6ZT0iNTgiIGZvbnQtd2VpZ2h0PSI5MDAiIGZpbGw9IiNmN2M5NDgiPkNhc2g8dHNwYW4gZmlsbD0iIzdlZTIyYSI+R3JvdzwvdHNwYW4+PC90ZXh0Pjwvc3ZnPg==" alt="CashGrow logo"><div><strong><span class="gold">Cash</span><span class="lime">Grow</span></strong><div class="small">GROW SMARTER. SHARE. EARN.</div></div></div>
+<p>Digital products, account tools and referral tracking in one professional platform.</p>
+<p class="small">© 2026 CashGrow. All rights reserved.</p>
+</div></footer>
+
 <script>
 const $=id=>document.getElementById(id);
-let current=null;
-function msg(text,ok=false){$('authMsg').innerHTML='<div class="notice '+(ok?'success':'error')+'">'+text+'</div>'}
-function showLogin(){ $('loginForm').style.display='block';$('registerForm').style.display='none';$('forgotForm').style.display='none';}
-function showRegister(){ $('loginForm').style.display='none';$('registerForm').style.display='block';$('forgotForm').style.display='none';}
-function showForgot(){ $('loginForm').style.display='none';$('registerForm').style.display='none';$('forgotForm').style.display='block';}
-function openAuth(mode){document.querySelector('#account').scrollIntoView({behavior:'smooth'});mode==='register'?showRegister():showLogin();}
-async function api(path,opt={}){const r=await fetch(path,{credentials:'same-origin',...opt});let d={};try{d=await r.json()}catch{};return {r,d}}
-async function login(){const identifier=$('loginId').value.trim(),password=$('loginPw').value;if(!identifier||!password)return msg('Enter email/mobile and password.');msg('Logging in...',true);const x=await api('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({identifier,password})});if(!x.d.success)return msg(x.d.message||'Login failed.');current=x.d.user;showDashboard();loadDash();}
-async function register(){const body={name:$('regName').value.trim(),phone:$('regPhone').value.trim(),email:$('regEmail').value.trim(),password:$('regPw').value,referral_code:$('regRef').value.trim()};if(!body.name||!body.phone||!body.email||!body.password)return msg('Fill all required fields.');const x=await api('/api/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(!x.d.success)return msg(x.d.message||'Registration failed.');current=x.d.user;showDashboard();loadDash();}
-async function forgot(){const identifier=$('forgotId').value.trim();if(!identifier)return msg('Enter your email or mobile number.');const x=await api('/api/forgot-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({identifier})});msg(x.d.message||'Request submitted.',true);}
-function showDashboard(){$('authBox').style.display='none';$('dashboard').style.display='block';}
-function rupees(p){return '₹'+(Number(p||0)/100).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});}
-async function loadDash(){const x=await api('/api/dashboard');if(!x.d.success){$('dashboard').style.display='none';$('authBox').style.display='block';return}const u=x.d.user;$('dWallet').textContent=rupees(u.wallet_balance);$('dRefs').textContent=x.d.referrals.count;$('dEarn').textContent=rupees(x.d.referrals.earnings);$('dCode').textContent=u.referral_code||'-';$('dLink').value=location.origin+'/?ref='+encodeURIComponent(u.referral_code||'');$('paymentsBody').innerHTML=(x.d.payments||[]).map(p=>'<tr><td>'+p.product+'</td><td>'+rupees(p.amount)+'</td><td>'+p.status+'</td><td>'+new Date(p.created_at).toLocaleString()+'</td></tr>').join('');$('txBody').innerHTML=(x.d.transactions||[]).map(t=>'<tr><td>'+t.type+'</td><td>'+rupees(t.amount)+'</td><td>'+t.direction+'</td><td>'+t.status+'</td><td>'+new Date(t.created_at).toLocaleString()+'</td></tr>').join('');$('wdBody').innerHTML=(x.d.withdrawals||[]).map(w=>'<tr><td>'+rupees(w.amount)+'</td><td>'+w.status+'</td><td>'+w.method+'</td><td>'+new Date(w.created_at).toLocaleString()+'</td></tr>').join('');}
-async function logout(){await api('/api/logout',{method:'POST'});$('dashboard').style.display='none';$('authBox').style.display='block';showLogin();}
-async function copyReferral(){try{await navigator.clipboard.writeText($('dLink').value);alert('Referral link copied.')}catch{alert($('dLink').value)}}
-function openProfile(){const u=current||{};$('modalContent').innerHTML='<h2>Profile</h2><input class="input" id="pName" value="'+(u.name||'')+'"><input class="input" id="pPhone" value="'+(u.phone||'')+'"><input class="input" id="pEmail" value="'+(u.email||'')+'"><button class="btn primary" onclick="saveProfile()">Save Profile</button><button class="btn light" onclick="closeModal()">Close</button>';$('modal').style.display='flex';}
-async function saveProfile(){const b={name:$('pName').value,phone:$('pPhone').value,email:$('pEmail').value};const x=await api('/api/profile',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});if(!x.d.success)return alert(x.d.message);current=x.d.user;alert('Profile updated.');closeModal();loadDash();}
-function openWithdraw(){$('modalContent').innerHTML='<h2>Withdraw</h2><p class="small">Minimum withdrawal: ₹1,000</p><input class="input" id="wAmount" type="number" min="1000" placeholder="Amount in ₹"><select class="input" id="wMethod"><option value="upi">UPI</option><option value="bank">Bank Account</option></select><input class="input" id="wUpi" placeholder="UPI ID"><input class="input" id="wName" placeholder="Account Holder Name"><input class="input" id="wAcc" placeholder="Account Number"><input class="input" id="wIfsc" placeholder="IFSC"><button class="btn primary" onclick="sendWithdraw()">Submit Withdrawal</button><button class="btn light" onclick="closeModal()">Cancel</button>';$('modal').style.display='flex';}
-async function sendWithdraw(){const method=$('wMethod').value;const b={amount:Number($('wAmount').value)*100,method,upi_id:$('wUpi').value,account_name:$('wName').value,account_number:$('wAcc').value,ifsc:$('wIfsc').value};const x=await api('/api/withdraw',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});alert(x.d.message||'Done');if(x.d.success){closeModal();loadDash();}}
-function closeModal(){$('modal').style.display='none';}
-async function buy(product){openAuth('login');const x=await api('/api/me');if(!x.d.success){alert('Please login or create an account first, then choose the package again.');return}current=x.d.user;const b={product,name:current.name,phone:current.phone,email:current.email,referral_code:current.referred_by||'',user_id:current.id};const order=await api('/api/create-order',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});if(!order.d.success){alert(order.d.message||'Order creation failed.');return}const o=order.d.order;const rz=new Razorpay({key:order.d.key_id,amount:o.amount,currency:o.currency,name:'CashGrow',description:order.d.product.name,order_id:o.id,prefill:{name:current.name,email:current.email,contact:current.phone},theme:{color:'#35d07f'},handler:async function(resp){const v=await api('/api/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...resp,product:product,user_id:current.id,name:current.name,phone:current.phone,email:current.email})});if(v.d.success){alert('Payment successful and verified.');loadDash();}else alert(v.d.message||'Verification failed.')}});rz.open();}
-(async()=>{const q=new URLSearchParams(location.search);const ref=q.get('ref');if(ref)$('regRef').value=ref;const m=await api('/api/me');if(m.d.success){current=m.d.user;showDashboard();loadDash();}const reset=q.get('reset');if(reset){showForgot();$('modalContent').innerHTML='<h2>Reset Password</h2><input class="input" id="rpw" type="password" placeholder="New password"><button class="btn primary" onclick="resetPw(\\''+reset+'\\')">Reset Password</button>';$('modal').style.display='flex';}})();
-async function resetPw(token){const x=await api('/api/reset-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token,password:$('rpw').value})});alert(x.d.message);if(x.d.success){closeModal();location.href='/';}}
-</script></body></html>`);
+function showLogin(){$("loginForm").classList.remove("hidden");$("regForm").classList.add("hidden");$("loginTab").classList.add("active");$("regTab").classList.remove("active");}
+function showRegister(){$("loginForm").classList.add("hidden");$("regForm").classList.remove("hidden");$("loginTab").classList.remove("active");$("regTab").classList.add("active");}
+function msg(id,t,cls=""){$(id).textContent=t;$(id).className="notice "+cls;}
+async function register(){
+  msg("authMsg","Creating account...");
+  try{const r=await fetch("/api/register",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:$("regName").value,phone:$("regPhone").value,email:$("regEmail").value,password:$("regPass").value,referral_code:$("regRef").value})});const d=await r.json();if(!d.success){msg("authMsg",d.message||"Registration failed.","danger");return;}msg("authMsg",d.message||"Account created.","success");showDashboard(d.user);}
+  catch(e){msg("authMsg","Registration failed.","danger");}
+}
+async function login(){
+  msg("authMsg","Logging in...");
+  try{const r=await fetch("/api/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({identifier:$("loginId").value,password:$("loginPass").value})});const d=await r.json();if(!d.success){msg("authMsg",d.message||"Login failed.","danger");return;}msg("authMsg","Login successful.","success");showDashboard(d.user);await loadDashboard();}
+  catch(e){msg("authMsg","Login failed.","danger");}
+}
+function showDashboard(u){$("dashboard").classList.remove("hidden");$("welcome").textContent="Welcome, "+(u.name||"CashGrow Member");$("wallet").textContent="₹"+(Number(u.wallet_balance||0)/100).toFixed(2);$("myRef").textContent=u.referral_code||"-";$("profileName").value=u.name||"";$("profilePhone").value=u.phone||"";}
+async function checkLogin(){try{const r=await fetch("/api/me");if(!r.ok)return;const d=await r.json();if(d.success&&d.loggedIn){showDashboard(d.user);await loadDashboard();}}catch(e){}}
+async function loadDashboard(){try{const r=await fetch("/api/dashboard");const d=await r.json();if(d.success){$("wallet").textContent="₹"+(Number(d.user.wallet_balance||0)/100).toFixed(2);$("myRef").textContent=d.user.referral_code||"-";}}catch(e){}}
+async function logout(){await fetch("/api/logout",{method:"POST"});$("dashboard").classList.add("hidden");showLogin();msg("authMsg","Logged out.");}
+async function saveProfile(){const r=await fetch("/api/profile",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:$("profileName").value,phone:$("profilePhone").value})});const d=await r.json();msg("dashMsg",d.message||"Done",d.success?"success":"danger");if(d.success)await loadDashboard();}
+async function requestWithdrawal(){const r=await fetch("/api/withdraw",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({amount:$("withdrawAmount").value,method:$("withdrawMethod").value,account_details:$("withdrawDetails").value})});const d=await r.json();msg("dashMsg",d.message||"Done",d.success?"success":"danger");if(d.success)await loadDashboard();}
+async function buy(product,ev){
+  const button=ev?.currentTarget; if(button){button.disabled=true;button.textContent="Creating Order...";}
+  msg("payMsg","Creating payment order...");
+  try{
+    const r=await fetch("/api/create-order",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({product})});
+    const o=await r.json();if(!r.ok||!o.success)throw new Error(o.error||"Order creation failed");
+    const options={key:o.key_id,amount:o.amount,currency:"INR",name:"CashGrow",description:o.name,order_id:o.order_id,prefill:{name:$("profileName").value||"",email:$("regEmail").value||$("loginId").value||"",contact:$("profilePhone").value||""},handler:async function(resp){
+      msg("payMsg","Verifying payment...");
+      const vr=await fetch("/api/verify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({razorpay_order_id:resp.razorpay_order_id,razorpay_payment_id:resp.razorpay_payment_id,razorpay_signature:resp.razorpay_signature,name:$("profileName").value||$("regName").value,phone:$("profilePhone").value||$("regPhone").value,email:$("regEmail").value,referral_code:$("regRef").value})});
+      const d=await vr.json();msg("payMsg",d.message||"Verification failed",d.success?"success":"danger");if(d.success)await loadDashboard();
+      if(button){button.disabled=false;button.textContent=product==="starter"?"Buy Starter":"Buy Pro";}
+    },modal:{ondismiss:function(){if(button){button.disabled=false;button.textContent=product==="starter"?"Buy Starter":"Buy Pro";}}}};
+    const rzp=new Razorpay(options);rzp.on("payment.failed",()=>msg("payMsg","Payment failed. Please try again.","danger"));rzp.open();
+  }catch(e){msg("payMsg",e.message||"Payment failed.","danger");if(button){button.disabled=false;button.textContent=product==="starter"?"Buy Starter":"Buy Pro";}}
+}
+checkLogin();
+</script>
+</body></html>`;
 }
