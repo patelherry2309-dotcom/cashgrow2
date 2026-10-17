@@ -1,3 +1,10 @@
 name = "soft-sunset-b004"
 main = "worker.js"
 compatibility_date = "2026-10-11"
+
+[previews]
+
+[[previews.d1_databases]]
+binding = "DB"
+database_name = "cashgrow-database"
+database_id = "7d42d778-c35e-40ea-802a-d5343246b6e8"
