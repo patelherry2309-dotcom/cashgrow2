@@ -17,7 +17,7 @@ const PRODUCTS = {
 };
 const MIN_WITHDRAWAL = 100000;
 const SESSION_DAYS = 7;
-
+// CashGrow deployment sync
 async function ensureSchema(env) {
   if (!env.DB) throw new Error("D1 binding DB is missing.");
   const stmts = [
