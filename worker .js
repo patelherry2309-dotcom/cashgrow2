@@ -550,6 +550,15 @@ a{text-decoration:none;color:inherit}
 <input id="loginId" class="input" placeholder="Email or Mobile Number">
 <input id="loginPass" class="input" type="password" placeholder="Password">
 <button class="btn secondary" onclick="login()">Login</button>
+
+
+<p style="text-align:center;margin-top:10px;">
+  <a href="#" onclick="forgotPassword();return false;" style="color:#087f5b;font-weight:700;">
+    Forgot Password?
+  </a>
+</p>
+
+</div>
 </div>
 <div id="regForm" class="hidden">
 <input id="regName" class="input" placeholder="Full Name">
@@ -627,9 +636,35 @@ function showLogin(){$("loginForm").classList.remove("hidden");$("regForm").clas
 function showRegister(){$("loginForm").classList.add("hidden");$("regForm").classList.remove("hidden");$("loginTab").classList.remove("active");$("regTab").classList.add("active");}
 function msg(id,t,cls=""){$(id).textContent=t;$(id).className="notice "+cls;}
 async function register(){
+
   msg("authMsg","Creating account...");
   try{const r=await fetch("/api/register",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:$("regName").value,phone:$("regPhone").value,email:$("regEmail").value,password:$("regPass").value,referral_code:$("regRef").value})});const d=await r.json();if(!d.success){msg("authMsg",d.message||"Registration failed.","danger");return;}msg("authMsg",d.message||"Account created.","success");showDashboard(d.user);}
   catch(e){msg("authMsg","Registration failed.","danger");}
+}
+async function forgotPassword(){
+  const email = prompt("Enter your registered email address:");
+
+  if(!email){
+    return;
+  }
+
+  try{
+    const r = await fetch("/api/forgot-password",{
+      method:"POST",
+      headers:{
+        "Content-Type":"application/json"
+      },
+      body:JSON.stringify({
+        email:email.trim()
+      })
+    });
+
+    const d = await r.json();
+
+    alert(d.message || "If this email is registered, reset instructions will be sent.");
+  }catch(e){
+    alert("Unable to process password reset. Please try again.");
+  }
 }
 async function login(){
   msg("authMsg","Logging in...");
