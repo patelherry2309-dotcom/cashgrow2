@@ -264,6 +264,11 @@ async function createOrder(request,env){
     const ins=await env.DB.prepare("INSERT INTO users(name,phone,email,referral_code,referred_by,wallet_balance) VALUES(?,?,?,?,?,0)").bind(name,ph,email,code,referredBy).run();
     user={id:ins.meta.last_row_id,name,phone:ph,email,referral_code:code,referred_by:referredBy,wallet_balance:0};
   }
+console.log("RZP CONFIG CHECK", {
+  keyIdPrefix: env.RAZORPAY_KEY_ID?.slice(0, 8),
+  keyIdLength: env.RAZORPAY_KEY_ID?.length,
+  secretLength: env.RAZORPAY_KEY_SECRET?.length
+});
   const auth=btoa(`${env.RAZORPAY_KEY_ID}:${env.RAZORPAY_KEY_SECRET}`);
   const rr=await fetch("https://api.razorpay.com/v1/orders",{method:"POST",headers:{"Authorization":`Basic ${auth}`,"Content-Type":"application/json"},body:JSON.stringify({amount:product.amount,currency:"INR",receipt:`CG${user.id}-${Date.now()}`,notes:{user_id:String(user.id),product:product.key}})});
   const data=await rr.json();
