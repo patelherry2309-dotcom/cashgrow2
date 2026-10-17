@@ -583,6 +583,21 @@ a{text-decoration:none;color:inherit}
 <button class="btn" onclick="requestWithdrawal()">Request Withdrawal</button>
 <div id="dashMsg" class="notice"></div><button class="btn secondary" style="margin-top:10px" onclick="logout()">Logout</button>
 </div>
+<section id="transactionsSection" style="margin:30px 0;">
+  <div style="display:flex;justify-content:space-between;align-items:center;">
+    <div>
+      <h2 style="margin:0;color:#071b14">Transactions</h2>
+      <div style="margin-top:4px;color:#66756f;font-size:14px;">
+        Your recent payment and wallet activity
+      </div>
+    </div>
+  </div>
+
+  <div id="transactionsList">
+    <div style="color:#66756f;padding:15px 0;">
+      Loading transactions...
+    </div>
+  </div>
 </section>
 
 <section id="packages" class="section"><h2>Choose Your Package</h2>
@@ -694,18 +709,7 @@ async function buy(product,ev){
 }
 checkLogin();
 </script>
-<section id="transactionsSection" style="margin:24px 0;padding:20px;background:#fff;border:1px solid rgba(11,61,46,.12);border-radius:18px;box-shadow:0 10px 30px rgba(7,27,20,.06)">
-  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px">
-    <div>
-      <h2 style="margin:0;color:#071b14">Transactions</h2>
-      <div style="margin-top:4px;color:#66756f;font-size:13px">Your recent payment and wallet activity</div>
-    </div>
-  </div>
 
-  <div id="transactionsList">
-    <div style="color:#66756f">Loading transactions...</div>
-  </div>
-</section>
 
 <script>
 async function loadTransactions(){
