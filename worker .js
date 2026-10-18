@@ -574,7 +574,7 @@ a{text-decoration:none;color:inherit}
 <h2>Your Dashboard</h2><p id="welcome"></p><div class="wallet" id="wallet">â¹0.00</div>
 <p class="muted" style="text-align:center">Wallet balance</p>
 <div class="refbox" id="myRef">-</div><p class="muted" style="text-align:center">Your referral code</p>
-<div style="margin-top:15px;"><input id="referralLink" class="input" readonly placeholder="Your referral link"><button class="btn" onclick="copyReferralLink()">Copy Referral Link</button></div>
+
 <div style="margin-top:12px;">
   <input id="referralLink" class="input" readonly placeholder="Your referral link">
   <button class="btn secondary" onclick="copyReferralLink()">Copy Referral Link</button>
