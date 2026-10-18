@@ -616,6 +616,19 @@ a{text-decoration:none;color:inherit}
 </div>
 
 <div class="grid" style="margin-top:18px">
+  <div class="card" style="margin:0;border:2px solid #0b3d2e">
+    <h3>ð Dashboard Features</h3>
+    <p class="muted">Your CashGrow account tools are active below.</p>
+    <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:10px">
+      <div class="refbox">ð° Wallet</div>
+      <div class="refbox">ð Referral Link</div>
+      <div class="refbox">ð¥ My Referrals</div>
+      <div class="refbox">ð Transactions</div>
+      <div class="refbox">ð Purchase History</div>
+      <div class="refbox">ð¦ Withdrawal History</div>
+    </div>
+  </div>
+
   <div class="card" style="margin:0">
     <h3>Profile</h3>
     <input id="profileName" class="input" placeholder="Name">
@@ -636,11 +649,16 @@ a{text-decoration:none;color:inherit}
 <div id="dashMsg" class="notice"></div>
 
 <section id="transactionsSection" style="display:block!important;visibility:visible!important;opacity:1!important;position:relative!important;margin:24px 0!important;">
-  <h2 style="margin:0;color:#071b14">Transactions</h2>
-  <div style="margin-top:4px;color:#66756f;font-size:14px">Your recent payment and wallet activity</div>
+  <h2 style="margin:0;color:#071b14">ð Transactions</h2>
+  <div style="margin-top:4px;color:#66756f;font-size:14px">Payment, referral reward and wallet activity</div>
   <div id="transactionsList" class="card" style="margin-top:12px">
     <div class="muted">Loading transactions...</div>
   </div>
+</section>
+
+<section id="purchaseSection" style="margin:24px 0!important;">
+  <h2 style="margin:0;color:#071b14">ð Purchase History</h2>
+  <div style="margin-top:4px;color:#66756f;font-size:14px">Your verified package purchases appear in Transactions above.</div>
 </section>
 
 <section id="referralsSection" style="margin:24px 0!important;">
@@ -953,4 +971,105 @@ async function loadReferrals(){
           <div style="font-size:12px;color:#66756f">${esc(x.email||"")}</div>
           <div style="font-size:12px;color:#66756f">${esc(formatDate(x.created_at))}</div>
         </div>
-        <div style="text-align:r
+        <div style="text-align:right">
+          <div style="font-weight:900">${esc(x.product||"Referral")}</div>
+          <div class="${x.status==="credited"?"success":"muted"}">${x.status==="credited"?money(Number(x.reward_amount||0)*100):esc(x.status||"pending")}</div>
+        </div>
+      </div>`).join("");
+  }catch(e){box.innerHTML='<div class="danger">Unable to load referrals.</div>';}
+}
+
+async function loadWithdrawals(){
+  const box=$("withdrawalsList");
+  if(!box)return;
+  try{
+    const r=await fetch("/api/withdrawals");
+    const d=await r.json();
+    if(!d.success){box.innerHTML='<div class="danger">Unable to load withdrawal history.</div>';return;}
+    const items=d.items||[];
+    if(!items.length){box.innerHTML='<div class="muted">No withdrawal requests yet.</div>';return;}
+    box.innerHTML=items.map(x=>`
+      <div style="display:flex;justify-content:space-between;gap:12px;padding:13px 0;border-bottom:1px solid rgba(11,61,46,.08)">
+        <div>
+          <div style="font-weight:800">${esc(x.method||"Withdrawal")}</div>
+          <div style="font-size:12px;color:#66756f">${esc(formatDate(x.created_at))}</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-weight:900">${money(x.amount)}</div>
+          <div style="font-size:12px;color:#66756f">${esc(x.status||"pending")}</div>
+        </div>
+      </div>`).join("");
+  }catch(e){box.innerHTML='<div class="danger">Unable to load withdrawal history.</div>';}
+}
+
+async function buy(product,ev){
+  if(!$("dashboard")||$("dashboard").classList.contains("hidden")){
+    msg("payMsg","Please login or create an account before purchasing.","danger");
+    $("account")?.scrollIntoView({behavior:"smooth"});
+    return;
+  }
+  const button=ev?.currentTarget;
+  if(button){button.disabled=true;button.textContent="Creating Order...";}
+  msg("payMsg","Creating payment order...");
+  try{
+    const r=await fetch("/api/create-order",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({product})
+    });
+    const o=await r.json();
+    if(!r.ok||!o.success)throw new Error(o.error||"Order creation failed");
+
+    const options={
+      key:o.key_id,
+      amount:o.amount,
+      currency:"INR",
+      name:"CashGrow",
+      description:o.name,
+      order_id:o.order_id,
+      prefill:{
+        name:$("profileName").value||$("regName").value||"",
+        email:$("regEmail").value||"",
+        contact:$("profilePhone").value||$("regPhone").value||""
+      },
+      handler:async function(resp){
+        msg("payMsg","Verifying payment...");
+        try{
+          const vr=await fetch("/api/verify",{
+            method:"POST",
+            headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({
+              razorpay_order_id:resp.razorpay_order_id,
+              razorpay_payment_id:resp.razorpay_payment_id,
+              razorpay_signature:resp.razorpay_signature,
+              name:$("profileName").value||$("regName").value,
+              phone:$("profilePhone").value||$("regPhone").value,
+              email:$("regEmail").value||"",
+              referral_code:$("regRef").value||""
+            })
+          });
+          const d=await vr.json();
+          msg("payMsg",d.message||"Verification failed",d.success?"success":"danger");
+          if(d.success)await loadDashboard();
+        }catch(e){msg("payMsg","Payment verification failed.","danger");}
+        if(button){button.disabled=false;button.textContent=product==="starter"?"Buy Starter":"Buy Pro";}
+      },
+      modal:{ondismiss:function(){
+        if(button){button.disabled=false;button.textContent=product==="starter"?"Buy Starter":"Buy Pro";}
+      }}
+    };
+    const rzp=new Razorpay(options);
+    rzp.on("payment.failed",function(){msg("payMsg","Payment failed. Please try again.","danger");if(button){button.disabled=false;button.textContent=product==="starter"?"Buy Starter":"Buy Pro";}});
+    rzp.open();
+  }catch(e){
+    msg("payMsg",e.message||"Payment failed.","danger");
+    if(button){button.disabled=false;button.textContent=product==="starter"?"Buy Starter":"Buy Pro";}
+  }
+}
+
+loadReferralFromUrl();
+checkLogin();
+</script>
+</body></html>`;
+}
+
