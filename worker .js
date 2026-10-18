@@ -574,6 +574,10 @@ a{text-decoration:none;color:inherit}
 <h2>Your Dashboard</h2><p id="welcome"></p><div class="wallet" id="wallet">â¹0.00</div>
 <p class="muted" style="text-align:center">Wallet balance</p>
 <div class="refbox" id="myRef">-</div><p class="muted" style="text-align:center">Your referral code</p>
+<div style="margin-top:12px;">
+  <input id="referralLink" class="input" readonly placeholder="Your referral link">
+  <button class="btn secondary" onclick="copyReferralLink()">Copy Referral Link</button>
+</div>
 <input id="profileName" class="input" placeholder="Name"><input id="profilePhone" class="input" placeholder="Phone">
 <button class="btn secondary" onclick="saveProfile()">Save Profile</button>
 <div style="height:10px"></div>
@@ -686,7 +690,10 @@ async function login(){
   try{const r=await fetch("/api/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({identifier:$("loginId").value,password:$("loginPass").value})});const d=await r.json();if(!d.success){msg("authMsg",d.message||"Login failed.","danger");return;}msg("authMsg","Login successful.","success");showDashboard(d.user);await loadDashboard();}
   catch(e){msg("authMsg","Login failed.","danger");}
 }
-function showDashboard(u){$("dashboard").classList.remove("hidden");$("welcome").textContent="Welcome, "+(u.name||"CashGrow Member");$("wallet").textContent="â¹"+(Number(u.wallet_balance||0)/100).toFixed(2);$("myRef").textContent=u.referral_code||"-";$("profileName").value=u.name||"";$("profilePhone").value=u.phone||"";}
+function setReferralLink(code){const box=$("referralLink");if(box&&code)box.value=location.origin+"/?ref="+encodeURIComponent(code);}
+async function copyReferralLink(){const box=$("referralLink");if(!box||!box.value)return;try{await navigator.clipboard.writeText(box.value);msg("dashMsg","Referral link copied successfully.","success");}catch(e){box.select();document.execCommand("copy");msg("dashMsg","Referral link copied successfully.","success");}}
+function loadReferralFromUrl(){const ref=new URLSearchParams(location.search).get("ref");if(ref&&$("regRef")){$("regRef").value=ref.toUpperCase();showRegister();}}
+function showDashboard(u){$("dashboard").classList.remove("hidden");$("welcome").textContent="Welcome, "+(u.name||"CashGrow Member");$("wallet").textContent="₹"+(Number(u.wallet_balance||0)/100).toFixed(2);$("myRef").textContent=u.referral_code||"-";$("profileName").value=u.name||"";$("profilePhone").value=u.phone||"";setReferralLink(u.referral_code);}
 async function checkLogin(){try{const r=await fetch("/api/me");if(!r.ok)return;const d=await r.json();if(d.success&&d.loggedIn){showDashboard(d.user);await loadDashboard();}}catch(e){}}
 async function loadDashboard(){try{const r=await fetch("/api/dashboard");const d=await r.json();if(d.success){$("wallet").textContent="₹"+(Number(d.user.wallet_balance||0)/100).toFixed(2);$("myRef").textContent=d.user.referral_code||"-";await loadTransactions();}}catch(e){}}
 async function logout(){await fetch("/api/logout",{method:"POST"});$("dashboard").classList.add("hidden");showLogin();msg("authMsg","Logged out.");}
@@ -707,7 +714,7 @@ async function buy(product,ev){
     const rzp=new Razorpay(options);rzp.on("payment.failed",()=>msg("payMsg","Payment failed. Please try again.","danger"));rzp.open();
   }catch(e){msg("payMsg",e.message||"Payment failed.","danger");if(button){button.disabled=false;button.textContent=product==="starter"?"Buy Starter":"Buy Pro";}}
 }
-checkLogin();
+loadReferralFromUrl();checkLogin();
 </script>
 
 
