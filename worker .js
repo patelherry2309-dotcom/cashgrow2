@@ -583,7 +583,7 @@ a{text-decoration:none;color:inherit}
 <button class="btn" onclick="requestWithdrawal()">Request Withdrawal</button>
 <div id="dashMsg" class="notice"></div><button class="btn secondary" style="margin-top:10px" onclick="logout()">Logout</button>
 
-<section id="transactionsSection" style="margin:30px 0;">
+<section id="transactionsSection" style="display:block!important;margin:20px 0;">
   <div style="display:flex;justify-content:space-between;align-items:center;">
     <div>
       <h2 style="margin:0;color:#071b14">Transactions</h2>
