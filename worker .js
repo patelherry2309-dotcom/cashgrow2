@@ -582,7 +582,7 @@ a{text-decoration:none;color:inherit}
 <input id="withdrawDetails" class="input" placeholder="UPI ID / Bank details">
 <button class="btn" onclick="requestWithdrawal()">Request Withdrawal</button>
 <div id="dashMsg" class="notice"></div><button class="btn secondary" style="margin-top:10px" onclick="logout()">Logout</button>
-</div>
+
 <section id="transactionsSection" style="margin:30px 0;">
   <div style="display:flex;justify-content:space-between;align-items:center;">
     <div>
@@ -599,7 +599,7 @@ a{text-decoration:none;color:inherit}
     </div>
   </div>
 </section>
-
+</div>
 <section id="packages" class="section"><h2>Choose Your Package</h2>
 <div class="grid">
 <div class="card"><h3>Starter Bundle</h3><p class="muted">Digital Creator Starter Bundle</p><div class="price">â¹599</div><p>Referral reward: <b>â¹400</b></p><button class="btn" onclick="buy('starter',event)">Buy Starter</button></div>
