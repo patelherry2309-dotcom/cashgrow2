@@ -1,4 +1,3 @@
-
 export default {
   async fetch(request, env) {
     try {
@@ -311,13 +310,34 @@ async function verifyPayment(request,env){
       if(ref && ref.id!==userId){
         const dup=await env.DB.prepare("SELECT id FROM referrals WHERE payment_id=?").bind(razorpay_payment_id).first();
         if(!dup){
-          const reward=PRODUCTS[product].reward*100;
-          await env.DB.prepare("UPDATE users SET wallet_balance=wallet_balance+? WHERE id=?").bind(reward,ref.id).run();
-          await env.DB.prepare("INSERT INTO referrals(referrer_user_id,referred_user_id,payment_id,product,reward_amount,status) VALUES(?,?,?,?,?,?)")
-            .bind(ref.id,userId,razorpay_payment_id,product,PRODUCTS[product].reward,"credited").run();
-          await env.DB.prepare("INSERT INTO transactions(user_id,type,amount,direction,status,reference_id,description) VALUES(?,?,?,?,?,?,?)")
-            .bind(ref.id,"referral_reward",reward,"credit","completed",razorpay_payment_id,`Referral reward for ${PRODUCTS[product].name}`).run();
-          rewardMessage=` Referral reward â¹${PRODUCTS[product].reward} credited.`;
+          // Professional referral eligibility:
+          // 1) Referrer must have at least one captured/verified purchase.
+          // 2) A Starter (â¹599) referrer can earn only on Starter (â¹599) referrals.
+          // 3) A Pro (â¹999) referrer can earn on both Starter and Pro referrals.
+          // This prevents a â¹599 member from receiving the â¹800 Pro reward.
+          const refPurchase=await env.DB.prepare(
+            "SELECT MAX(CASE WHEN product='pro' THEN 1 ELSE 0 END) has_pro, MAX(CASE WHEN product='starter' THEN 1 ELSE 0 END) has_starter FROM payments WHERE user_id=? AND status='captured'"
+          ).bind(ref.id).first();
+          const hasPro=Number(refPurchase?.has_pro||0)===1;
+          const hasStarter=Number(refPurchase?.has_starter||0)===1;
+          const eligible=hasPro || (hasStarter && product==="starter");
+
+          if(eligible){
+            const reward=PRODUCTS[product].reward*100;
+            await env.DB.prepare("UPDATE users SET wallet_balance=wallet_balance+? WHERE id=?").bind(reward,ref.id).run();
+            await env.DB.prepare("INSERT INTO referrals(referrer_user_id,referred_user_id,payment_id,product,reward_amount,status) VALUES(?,?,?,?,?,?)")
+              .bind(ref.id,userId,razorpay_payment_id,product,PRODUCTS[product].reward,"credited").run();
+            await env.DB.prepare("INSERT INTO transactions(user_id,type,amount,direction,status,reference_id,description) VALUES(?,?,?,?,?,?,?)")
+              .bind(ref.id,"referral_reward",reward,"credit","completed",razorpay_payment_id,`Referral reward for ${PRODUCTS[product].name}`).run();
+            rewardMessage=` Referral reward â¹${PRODUCTS[product].reward} credited.`;
+          }else{
+            // Keep the referral relationship recorded, but do not credit an ineligible reward.
+            await env.DB.prepare("INSERT INTO referrals(referrer_user_id,referred_user_id,payment_id,product,reward_amount,status) VALUES(?,?,?,?,?,?)")
+              .bind(ref.id,userId,razorpay_payment_id,product,0,"not_eligible").run();
+            rewardMessage=hasStarter && !hasPro && product==="pro"
+              ? " Referral recorded. Pro reward is not available to Starter members."
+              : " Referral recorded. Reward is subject to package eligibility.";
+          }
         }
       }
     }
@@ -1073,5 +1093,3 @@ checkLogin();
 </script>
 </body></html>`;
 }
-
-
