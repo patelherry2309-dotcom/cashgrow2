@@ -494,7 +494,7 @@ async function verifyPayment(request,env){
               .bind(ref.id,userId,razorpay_payment_id,product,reward,"credited").run();
             await env.DB.prepare("INSERT INTO transactions(user_id,type,amount,direction,status,reference_id,description) VALUES(?,?,?,?,?,?,?)")
               .bind(ref.id,"referral_reward",reward,"credit","completed",razorpay_payment_id,`Referral reward for ${PRODUCTS[product].name}`).run();
-            rewardMessage=` Referral reward &#8377;${PRODUCTS[product].reward} credited.`;
+            rewardMessage=` Referral reward \u20B9${PRODUCTS[product].reward} credited.`;
           }else{
             // Keep the referral relationship recorded, but do not credit an ineligible reward.
             await env.DB.prepare("INSERT INTO referrals(referrer_user_id,referred_user_id,payment_id,product,reward_amount,status) VALUES(?,?,?,?,?,?)")
@@ -548,7 +548,7 @@ async function purchases(request,env){
 async function withdraw(request,env){
   try{
     const u=await requireUser(request,env), b=await request.json(), amount=Math.round(Number(b.amount)*100), method=text(b.method), details=text(b.account_details);
-    if(!Number.isFinite(amount)||amount<MIN_WITHDRAWAL) return json({success:false,message:"Minimum withdrawal is &#8377;1,000."},400);
+    if(!Number.isFinite(amount)||amount<MIN_WITHDRAWAL) return json({success:false,message:"Minimum withdrawal is \u20B91,000."},400);
     if(!method||!details) return json({success:false,message:"Withdrawal method and account details are required."},400);
     const fresh=await env.DB.prepare("SELECT wallet_balance FROM users WHERE id=?").bind(u.id).first();
     if(Number(fresh?.wallet_balance||0)<amount) return json({success:false,message:"Insufficient wallet balance."},400);
@@ -1155,23 +1155,30 @@ function renderTransactions(items){
   box.innerHTML = items.map(function(t){
     const sign = t.direction === "credit" ? "+" : "-";
     const cls = t.direction === "credit" ? "success" : "danger";
+    const labels = {
+      purchase: "Purchase",
+      referral_reward: "Referral Reward",
+      withdrawal: "Withdrawal",
+      withdrawal_refund: "Withdrawal Refund"
+    };
+    const title = labels[t.type] || t.title || t.type || "Transaction";
 
     return (
       '<div style="display:flex;justify-content:space-between;align-items:center;padding:14px 0;border-bottom:1px solid #eee;">' +
         '<div>' +
           '<div style="font-weight:800;color:#071a33;">' +
-            (t.title || t.type || "Transaction") +
+            esc(title) +
           '</div>' +
           '<div style="font-size:13px;color:#667085;">' +
-            (t.description || "") +
+            esc(t.description || "") +
           '</div>' +
         '</div>' +
         '<div style="text-align:right;white-space:nowrap;">' +
           '<div class="' + cls + '" style="font-weight:800;">' +
-            sign + Number(t.amount || 0).toLocaleString("en-IN") +
+            sign + money(t.amount) +
           '</div>' +
           '<div style="font-size:12px;color:#667085;">' +
-            (t.created_at ? new Date(t.created_at).toLocaleString("en-IN") : "") +
+            (t.created_at ? new Date(t.created_at + (String(t.created_at).endsWith("Z") ? "" : "Z")).toLocaleString("en-IN") : "") +
           '</div>' +
         '</div>' +
       '</div>'
@@ -1237,17 +1244,17 @@ async function loadReferrals(){
               String(x.email || "") +
             '</div>' +
             '<div style="font-size:12px;color:#667085;">' +
-              String(x.created_at || "") +
+              (x.created_at ? new Date(String(x.created_at).endsWith("Z") ? String(x.created_at) : String(x.created_at) + "Z").toLocaleString("en-IN") : "") +
             '</div>' +
           '</div>' +
           '<div style="text-align:right;">' +
-            '<div style="font-weight:900;">â¹' +
-              (amount/100).toLocaleString("en-IN") +
+            '<div style="font-weight:900;">' +
+              money(amount) +
             '</div>' +
             '<div class="' +
               (status === "credited" ? "success" : "muted") +
             '">' +
-              status +
+              (status === "credited" ? "Credited" : esc(status)) +
             '</div>' +
           '</div>' +
         '</div>'
