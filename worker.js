@@ -1055,26 +1055,40 @@ async function loadReferrals(){
 async function loadWithdrawals(){
   const box=$("withdrawalsList");
   if(!box)return;
+
   try{
     const r=await fetch("/api/withdrawals");
     const d=await r.json();
-    if(!d.success){box.innerHTML='<div class="danger">Unable to load withdrawal history.</div>';return;}
-    const items=d.items||[];
-    if(!items.length){box.innerHTML='<div class="muted">No withdrawal requests yet.</div>';return;}
-    box.innerHTML=items.map(x=>`
-      <div style="display:flex;justify-content:space-between;gap:12px;padding:13px 0;border-bottom:1px solid rgba(11,61,46,.08)">
-        <div>
-          <div style="font-weight:800">${esc(x.method||"Withdrawal")}</div>
-          <div style="font-size:12px;color:#66756f">${esc(formatDate(x.created_at))}</div>
-        </div>
-        <div style="text-align:right">
-          <div style="font-weight:900">${money(x.amount)}</div>
-          <div style="font-size:12px;color:#66756f">${esc(x.status||"pending")}</div>
-        </div>
-      </div>`).join("");
-  }catch(e){box.innerHTML='<div class="danger">Unable to load withdrawal history.</div>';}
-}
 
+    if(!d.success){
+      box.innerHTML='<div class="danger">Unable to load withdrawal history.</div>';
+      return;
+    }
+
+    const items=d.items||[];
+
+    if(!items.length){
+      box.innerHTML='<div class="muted">No withdrawal requests yet.</div>';
+      return;
+    }
+
+    box.innerHTML=items.map(function(x){
+      return '<div style="display:flex;justify-content:space-between;gap:12px;padding:13px 0;border-bottom:1px solid #eee">'
+        + '<div>'
+        + '<div style="font-weight:800">' + esc(x.method||"Withdrawal") + '</div>'
+        + '<div style="font-size:12px;color:#66756f">' + esc(formatDate(x.created_at)) + '</div>'
+        + '</div>'
+        + '<div style="text-align:right">'
+        + '<div style="font-weight:900">' + money(x.amount) + '</div>'
+        + '<div style="font-size:12px;color:#66756f">' + esc(x.status||"pending") + '</div>'
+        + '</div>'
+        + '</div>';
+    }).join("");
+
+  }catch(e){
+    box.innerHTML='<div class="danger">Unable to load withdrawal history.</div>';
+  }
+}
 async function buy(product,ev){
   if(!$("dashboard")||$("dashboard").classList.contains("hidden")){
     msg("payMsg","Please login or create an account before purchasing.","danger");
