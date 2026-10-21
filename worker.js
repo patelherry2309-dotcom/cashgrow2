@@ -19,6 +19,8 @@ export default {
       if (path === "/api/admin/login" && request.method === "POST") return adminLogin(request, env);
       if (path === "/api/admin/logout" && request.method === "POST") return adminLogout(request, env);
       if (path === "/api/admin/stats" && request.method === "GET") return adminStats(request, env);
+      if (path === "/api/admin/cashbacks" && request.method === "GET") return adminCashbacks(request, env);
+      if (path === "/api/admin/cashback-action" && request.method === "POST") return adminCashbackAction(request, env);
       if (path === "/api/admin/withdrawals" && request.method === "GET") return adminWithdrawals(request, env);
       if (path === "/api/admin/withdrawal-action" && request.method === "POST") return adminWithdrawalAction(request, env);
 
@@ -354,9 +356,78 @@ async function adminStats(request,env){
     const users=await env.DB.prepare("SELECT COUNT(*) count FROM users").first();
     const payments=await env.DB.prepare("SELECT COUNT(*) count,COALESCE(SUM(amount),0) amount FROM payments WHERE status='captured'").first();
     const pending=await env.DB.prepare("SELECT COUNT(*) count,COALESCE(SUM(amount),0) amount FROM withdrawals WHERE status='pending'").first();
-    return json({success:true,stats:{users:Number(users?.count||0),payments:Number(payments?.count||0),payment_amount:Number(payments?.amount||0),pending_withdrawals:Number(pending?.count||0),pending_withdrawal_amount:Number(pending?.amount||0)}});
+    const pendingCashback=await env.DB.prepare("SELECT COUNT(*) count,COALESCE(SUM(reward_amount),0) amount FROM referrals WHERE status='pending'").first();
+    return json({success:true,stats:{
+      users:Number(users?.count||0),
+      payments:Number(payments?.count||0),
+      payment_amount:Number(payments?.amount||0),
+      pending_withdrawals:Number(pending?.count||0),
+      pending_withdrawal_amount:Number(pending?.amount||0),
+      pending_cashbacks:Number(pendingCashback?.count||0),
+      pending_cashback_amount:Number(pendingCashback?.amount||0)
+    }});
   }catch(e){return json({success:false,message:safeError(e)},e.status||500);}
 }
+async function adminCashbacks(request,env){
+  try{
+    await requireAdmin(request,env);
+    const r=await env.DB.prepare(`
+      SELECT r.id,r.referrer_user_id,r.referred_user_id,r.payment_id,r.product,r.reward_amount,r.status,r.created_at,
+             u.name referrer_name,u.phone referrer_phone,u.email referrer_email,
+             ru.name referred_name,ru.phone referred_phone,ru.email referred_email
+      FROM referrals r
+      LEFT JOIN users u ON u.id=r.referrer_user_id
+      LEFT JOIN users ru ON ru.id=r.referred_user_id
+      WHERE r.status='pending'
+      ORDER BY r.id DESC LIMIT 200
+    `).all();
+    return json({success:true,items:r.results||[]});
+  }catch(e){return json({success:false,message:safeError(e)},e.status||500);}
+}
+
+async function adminCashbackAction(request,env){
+  try{
+    await requireAdmin(request,env);
+    const b=await request.json(),id=Number(b.id),action=text(b.action).toLowerCase();
+    if(!id||!["approve","reject"].includes(action)) return json({success:false,message:"Invalid cashback action."},400);
+
+    const ref=await env.DB.prepare("SELECT * FROM referrals WHERE id=? LIMIT 1").bind(id).first();
+    if(!ref) return json({success:false,message:"Cashback request not found."},404);
+    if(ref.status!=="pending") return json({success:false,message:"Cashback request is already processed."},409);
+
+    const reward=Number(ref.reward_amount||0);
+    if(action==="approve"){
+      if(reward<=0) return json({success:false,message:"This cashback request has no reward amount."},400);
+      const tx=await env.DB.prepare("SELECT id FROM transactions WHERE user_id=? AND type='referral_reward' AND reference_id=? LIMIT 1")
+        .bind(ref.referrer_user_id,ref.payment_id).first();
+
+      const statements=[
+        env.DB.prepare("UPDATE referrals SET status='credited' WHERE id=? AND status='pending'").bind(id),
+        env.DB.prepare("UPDATE users SET wallet_balance=wallet_balance+? WHERE id=?").bind(reward,ref.referrer_user_id)
+      ];
+      if(tx){
+        statements.push(env.DB.prepare("UPDATE transactions SET status='completed',amount=?,direction='credit',description=? WHERE id=?")
+          .bind(reward,`Referral reward approved for ${PRODUCTS[ref.product]?.name||ref.product}`,tx.id));
+      }else{
+        statements.push(env.DB.prepare("INSERT INTO transactions(user_id,type,amount,direction,status,reference_id,description) VALUES(?,?,?,?,?,?,?)")
+          .bind(ref.referrer_user_id,"referral_reward",reward,"credit","completed",ref.payment_id,`Referral reward approved for ${PRODUCTS[ref.product]?.name||ref.product}`));
+      }
+      await env.DB.batch(statements);
+      return json({success:true,message:`Cashback of ${money(reward)} approved and credited to wallet.`});
+    }
+
+    const tx=await env.DB.prepare("SELECT id FROM transactions WHERE user_id=? AND type='referral_reward' AND reference_id=? LIMIT 1")
+      .bind(ref.referrer_user_id,ref.payment_id).first();
+    const statements=[env.DB.prepare("UPDATE referrals SET status='rejected' WHERE id=? AND status='pending'").bind(id)];
+    if(tx){
+      statements.push(env.DB.prepare("UPDATE transactions SET status='rejected',description=? WHERE id=?")
+        .bind(`Referral reward rejected for ${PRODUCTS[ref.product]?.name||ref.product}`,tx.id));
+    }
+    await env.DB.batch(statements);
+    return json({success:true,message:"Cashback rejected. No wallet credit was made."});
+  }catch(e){return json({success:false,message:safeError(e)},e.status||500);}
+}
+
 async function adminWithdrawals(request,env){
   try{
     await requireAdmin(request,env);
@@ -393,7 +464,12 @@ function resetPage(token){
 }
 
 function adminPage(){
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CashGrow Admin</title><style>body{font-family:Arial,sans-serif;background:#f4f7f5;margin:0;color:#071b14}.wrap{max-width:1100px;margin:auto;padding:20px}.box{background:#fff;border-radius:16px;padding:18px;margin:14px 0;box-shadow:0 8px 30px #0000000d}.input{padding:12px;border:1px solid #ccd5d0;border-radius:9px;width:100%;box-sizing:border-box}.btn{padding:11px 14px;border:0;border-radius:9px;background:#0b3d2e;color:#fff;font-weight:800;margin:6px 4px 6px 0}.danger{background:#a61b1b}.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.muted{color:#66756f}@media(max-width:700px){.grid{grid-template-columns:1fr 1fr}}</style></head><body><div class="wrap"><h1>CashGrow Admin</h1><div id="login" class="box"><p>Enter your Cloudflare <b>ADMIN_KEY</b>.</p><input id="key" class="input" type="password" placeholder="Admin key"><button class="btn" onclick="adminLogin()">Login</button><div id="lm" class="muted"></div></div><div id="app" style="display:none"><div class="box"><button class="btn" onclick="loadAll()">Refresh</button><button class="btn danger" onclick="adminLogout()">Logout</button><div id="stats" class="grid"></div></div><div class="box"><h2>Withdrawals</h2><div id="list">Loading...</div></div></div></div><script>const $=id=>document.getElementById(id);async function adminLogin(){const r=await fetch('/api/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:$(\'key\').value})});const d=await r.json();$(\'lm\').textContent=d.message||'';if(d.success){$(\'login\').style.display='none';$(\'app\').style.display='block';loadAll();}}async function loadAll(){const s=await fetch('/api/admin/stats');const d=await s.json();if(!d.success){$(\'app\').style.display='none';$(\'login\').style.display='block';return;}$(\'stats\').innerHTML='<div class="box"><b>Users</b><div>'+d.stats.users+'</div></div><div class="box"><b>Captured Payments</b><div>'+d.stats.payments+'</div></div><div class="box"><b>Payment Volume</b><div>â¹'+(d.stats.payment_amount/100).toLocaleString('en-IN',{minimumFractionDigits:2})+'</div></div><div class="box"><b>Pending Withdrawals</b><div>'+d.stats.pending_withdrawals+' / â¹'+(d.stats.pending_withdrawal_amount/100).toLocaleString('en-IN',{minimumFractionDigits:2})+'</div></div>';const r=await fetch('/api/admin/withdrawals');const x=await r.json();if(!x.success){$(\'list\').textContent=x.message||'Unable to load';return;}if(!x.items.length){$(\'list\').textContent='No withdrawals.';return;}$(\'list\').innerHTML=x.items.map(w=>'<div class="box"><b>#'+w.id+' â '+esc(w.name||'User')+'</b><div class="muted">'+esc(w.email||'')+' Â· '+esc(w.phone||'')+'</div><p><b>Amount:</b> â¹'+(Number(w.amount||0)/100).toLocaleString('en-IN',{minimumFractionDigits:2})+'<br><b>Method:</b> '+esc(w.method||'')+'<br><b>Account:</b> '+esc(w.account_details||'')+'<br><b>Status:</b> '+esc(w.status||'')+'</p>'+(w.status==='pending'?'<button class="btn" onclick="act('+w.id+',\\'paid\\')">Mark Paid</button><button class="btn danger" onclick="act('+w.id+',\\'reject\\')">Reject + Refund</button>':'')+'</div>').join('');}async function act(id,action){if(!confirm(action==='paid'?'Confirm that you have paid this withdrawal externally?':'Reject this withdrawal and refund the wallet?'))return;const r=await fetch('/api/admin/withdrawal-action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,action})});const d=await r.json();alert(d.message||'Done');loadAll();}async function adminLogout(){await fetch('/api/admin/logout',{method:'POST'});location.reload();}function esc(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}</script></body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CashGrow Admin</title><style>body{font-family:Arial,sans-serif;background:#f4f7f5;margin:0;color:#071b14}.wrap{max-width:1100px;margin:auto;padding:20px}.box{background:#fff;border-radius:16px;padding:18px;margin:14px 0;box-shadow:0 8px 30px #0000000d}.input{padding:12px;border:1px solid #ccd5d0;border-radius:9px;width:100%;box-sizing:border-box}.btn{padding:11px 14px;border:0;border-radius:9px;background:#0b3d2e;color:#fff;font-weight:800;margin:6px 4px 6px 0}.danger{background:#a61b1b}.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.muted{color:#66756f}@media(max-width:700px){.grid{grid-template-columns:1fr 1fr}}</style></head><body><div class="wrap"><h1>CashGrow Admin</h1><div id="login" class="box"><p>Enter your Cloudflare <b>ADMIN_KEY</b>.</p><input id="key" class="input" type="password" placeholder="Admin key"><button class="btn" onclick="adminLogin()">Login</button><div id="lm" class="muted"></div></div><div id="app" style="display:none"><div class="box"><button class="btn" onclick="loadAll()">Refresh</button><button class="btn danger" onclick="adminLogout()">Logout</button><div id="stats" class="grid"></div></div><div class="box"><h2>Pending Cashback Requests</h2><div id="cashbacks">Loading...</div></div><div class="box"><h2>Withdrawals</h2><div id="list">Loading...</div></div></div></div><script>const $=id=>document.getElementById(id);async function adminLogin(){const r=await fetch('/api/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:$(\'key\').value})});const d=await r.json();$(\'lm\').textContent=d.message||'';if(d.success){$(\'login\').style.display='none';$(\'app\').style.display='block';loadAll();}}async function loadAll(){const s=await fetch('/api/admin/stats');const d=await s.json();if(!d.success){$('app').style.display='none';$('login').style.display='block';return;}
+$('stats').innerHTML='<div class="box"><b>Users</b><div>'+d.stats.users+'</div></div><div class="box"><b>Captured Payments</b><div>'+d.stats.payments+'</div></div><div class="box"><b>Payment Volume</b><div>â¹'+(d.stats.payment_amount/100).toLocaleString('en-IN',{minimumFractionDigits:2})+'</div></div><div class="box"><b>Pending Cashback</b><div>'+d.stats.pending_cashbacks+' / â¹'+(d.stats.pending_cashback_amount/100).toLocaleString('en-IN',{minimumFractionDigits:2})+'</div></div><div class="box"><b>Pending Withdrawals</b><div>'+d.stats.pending_withdrawals+' / â¹'+(d.stats.pending_withdrawal_amount/100).toLocaleString('en-IN',{minimumFractionDigits:2})+'</div></div>';
+const c=await fetch('/api/admin/cashbacks');const cx=await c.json();if(!cx.success){$('cashbacks').textContent=cx.message||'Unable to load';}else if(!cx.items.length){$('cashbacks').textContent='No pending cashback requests.';}else{$('cashbacks').innerHTML=cx.items.map(r=>'<div class="box"><b>#'+r.id+' â '+esc(r.referrer_name||'User')+'</b><div class="muted">Referred user: '+esc(r.referred_name||'User')+' Â· '+esc(r.referred_email||'')+'</div><p><b>Package:</b> '+esc(r.product||'')+'<br><b>Cashback:</b> â¹'+(Number(r.reward_amount||0)/100).toLocaleString('en-IN',{minimumFractionDigits:2})+'<br><b>Payment ID:</b> '+esc(r.payment_id||'')+'<br><b>Status:</b> '+esc(r.status||'')+'</p><button class="btn" onclick="cashbackAct('+r.id+',\\'approve\\')">Approve Cashback</button><button class="btn danger" onclick="cashbackAct('+r.id+',\\'reject\\')">Reject Cashback</button></div>').join('');}
+const r=await fetch('/api/admin/withdrawals');const x=await r.json();if(!x.success){$('list').textContent=x.message||'Unable to load';return;}if(!x.items.length){$('list').textContent='No withdrawals.';return;}$('list').innerHTML=x.items.map(w=>'<div class="box"><b>#'+w.id+' â '+esc(w.name||'User')+'</b><div class="muted">'+esc(w.email||'')+' Â· '+esc(w.phone||'')+'</div><p><b>Amount:</b> â¹'+(Number(w.amount||0)/100).toLocaleString('en-IN',{minimumFractionDigits:2})+'<br><b>Method:</b> '+esc(w.method||'')+'<br><b>Account:</b> '+esc(w.account_details||'')+'<br><b>Status:</b> '+esc(w.status||'')+'</p>'+(w.status==='pending'?'<button class="btn" onclick="act('+w.id+',\\'paid\\')">Mark Paid</button><button class="btn danger" onclick="act('+w.id+',\\'reject\\')">Reject + Refund</button>':'')+'</div>').join('');}
+async function cashbackAct(id,action){if(!confirm(action==='approve'?'Approve this cashback and credit the user wallet?':'Reject this cashback? No wallet credit will be made.'))return;const r=await fetch('/api/admin/cashback-action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,action})});const d=await r.json();alert(d.message||'Done');loadAll();}
+async function act(id,action){if(!confirm(action==='paid'?'Confirm that you have paid this withdrawal externally?':'Reject this withdrawal and refund the wallet?'))return;const r=await fetch('/api/admin/withdrawal-action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,action})});const d=await r.json();alert(d.message||'Done');loadAll();}async function adminLogout(){await fetch('/api/admin/logout',{method:'POST'});location.reload();}function esc(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}</script></body></html>`;
 }
 
 async function createOrder(request,env){
@@ -489,12 +565,11 @@ async function verifyPayment(request,env){
 
           if(eligible){
             const reward=PRODUCTS[product].reward*100;
-            await env.DB.prepare("UPDATE users SET wallet_balance=wallet_balance+? WHERE id=?").bind(reward,ref.id).run();
             await env.DB.prepare("INSERT INTO referrals(referrer_user_id,referred_user_id,payment_id,product,reward_amount,status) VALUES(?,?,?,?,?,?)")
-              .bind(ref.id,userId,razorpay_payment_id,product,reward,"credited").run();
+              .bind(ref.id,userId,razorpay_payment_id,product,reward,"pending").run();
             await env.DB.prepare("INSERT INTO transactions(user_id,type,amount,direction,status,reference_id,description) VALUES(?,?,?,?,?,?,?)")
-              .bind(ref.id,"referral_reward",reward,"credit","completed",razorpay_payment_id,`Referral reward for ${PRODUCTS[product].name}`).run();
-            rewardMessage=` Referral reward \u20B9${PRODUCTS[product].reward} credited.`;
+              .bind(ref.id,"referral_reward",reward,"credit","pending",razorpay_payment_id,`Referral reward pending admin approval for ${PRODUCTS[product].name}`).run();
+            rewardMessage=` Referral reward \u20B9${PRODUCTS[product].reward} is pending admin approval.`;
           }else{
             // Keep the referral relationship recorded, but do not credit an ineligible reward.
             await env.DB.prepare("INSERT INTO referrals(referrer_user_id,referred_user_id,payment_id,product,reward_amount,status) VALUES(?,?,?,?,?,?)")
@@ -934,7 +1009,7 @@ a{text-decoration:none;color:inherit}
 <section id="faq" class="section"><h2>Frequently Asked Questions</h2><div class="panel">
 <details class="faq"><summary>How do I create an account?</summary><p class="muted">Use Create Account above and complete the required fields.</p></details>
 <details class="faq"><summary>What are the package prices?</summary><p class="muted">Starter is &#8377;599 and Pro is &#8377;999.</p></details>
-<details class="faq"><summary>How is a referral reward credited?</summary><p class="muted">The payment is verified first. If the referral code is valid and eligible, the applicable reward is credited to the referrer's wallet.</p></details>
+<details class="faq"><summary>How is a referral reward credited?</summary><p class="muted">The payment is verified first. If the referral code is valid and eligible, the applicable reward is placed in pending status and is credited to the referrer's wallet only after admin approval.</p></details>
 <details class="faq"><summary>What is the minimum withdrawal?</summary><p class="muted">&#8377;1,000.</p></details>
 <details class="faq"><summary>Can I withdraw immediately after a purchase?</summary><p class="muted">Withdrawals depend on your available wallet balance and the platform's verification and withdrawal process.</p></details>
 </div></section>
