@@ -941,7 +941,7 @@ function renderTransactions(items){
   if(!box) return;
 
   if(!items || !items.length){
-    box.innerHTML = '<div class="muted">No transactions yet.</div>';
+    box.innerHTML = '<div class="muted">No transactions found.</div>';
     return;
   }
 
@@ -952,7 +952,7 @@ function renderTransactions(items){
     return (
       '<div style="display:flex;justify-content:space-between;align-items:center;padding:14px 0;border-bottom:1px solid #eee;">' +
         '<div>' +
-          '<div style="font-weight:800;color:#07111f;">' +
+          '<div style="font-weight:800;color:#071a33;">' +
             (t.title || t.type || "Transaction") +
           '</div>' +
           '<div style="font-size:13px;color:#667085;">' +
@@ -971,7 +971,6 @@ function renderTransactions(items){
     );
   }).join("");
 }
-
 async function loadTransactions(){
   const box=$("transactionsList");
   if(!box)return;
