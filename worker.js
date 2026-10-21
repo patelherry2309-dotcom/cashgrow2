@@ -945,30 +945,30 @@ function renderTransactions(items){
     return;
   }
 
-  box.innerHTML = items.map(t => {
+  box.innerHTML = items.map(function(t){
     const sign = t.direction === "credit" ? "+" : "-";
     const cls = t.direction === "credit" ? "success" : "danger";
 
-    return `
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid #eee;">
-        <div>
-          <div style="font-weight:800;color:#071a33;">
-            ${t.title || t.type || "Transaction"}
-          </div>
-          <div style="font-size:13px;color:#667085;">
-            ${t.description || ""}
-          </div>
-        </div>
-        <div style="text-align:right;white-space:nowrap;">
-          <div class="${cls}" style="font-weight:800;">
-            ${sign}₹${Number(t.amount || 0).toLocaleString("en-IN")}
-          </div>
-          <div style="font-size:12px;color:#667085;">
-            ${t.created_at ? new Date(t.created_at).toLocaleString("en-IN") : ""}
-          </div>
-        </div>
-      </div>
-    `;
+    return (
+      '<div style="display:flex;justify-content:space-between;align-items:center;padding:14px 0;border-bottom:1px solid #eee;">' +
+        '<div>' +
+          '<div style="font-weight:800;color:#07111f;">' +
+            (t.title || t.type || "Transaction") +
+          '</div>' +
+          '<div style="font-size:13px;color:#667085;">' +
+            (t.description || "") +
+          '</div>' +
+        '</div>' +
+        '<div style="text-align:right;white-space:nowrap;">' +
+          '<div class="' + cls + '" style="font-weight:800;">' +
+            sign + Number(t.amount || 0).toLocaleString("en-IN") +
+          '</div>' +
+          '<div style="font-size:12px;color:#667085;">' +
+            (t.created_at ? new Date(t.created_at).toLocaleString("en-IN") : "") +
+          '</div>' +
+        '</div>' +
+      '</div>'
+    );
   }).join("");
 }
 
