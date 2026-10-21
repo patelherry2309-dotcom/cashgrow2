@@ -937,26 +937,38 @@ async function requestWithdrawal(){
 }
 
 function renderTransactions(items){
-  const box=$("transactionsList");
-  if(!box)return;
-  if(!items.length){
-    box.innerHTML='<div class="muted">No transactions yet.</div>';
+  const box = $("transactionsList");
+  if(!box) return;
+
+  if(!items || !items.length){
+    box.innerHTML = '<div class="muted">No transactions yet.</div>';
     return;
   }
-  box.innerHTML=items.map(t=>{
-    const sign=t.direction==="credit"?"+":"â";
-    const cls=t.direction==="credit"?"success":"danger";
-    return `<div style="display:flex;justify-content:space-between;gap:15px;padding:14px 0;border-bottom:1px solid rgba(11,61,46,.08)">
-      <div>
-        <div style="font-weight:800;color:#071b14">${esc(prettyType(t.type))}</div>
-        <div style="font-size:13px;color:#66756f;margin-top:4px">${esc(t.description||"")}</div>
-        <div style="font-size:12px;color:#88958f;margin-top:4px">${esc(formatDate(t.created_at))}</div>
+
+  box.innerHTML = items.map(t => {
+    const sign = t.direction === "credit" ? "+" : "-";
+    const cls = t.direction === "credit" ? "success" : "danger";
+
+    return `
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid #eee;">
+        <div>
+          <div style="font-weight:800;color:#071a33;">
+            ${t.title || t.type || "Transaction"}
+          </div>
+          <div style="font-size:13px;color:#667085;">
+            ${t.description || ""}
+          </div>
+        </div>
+        <div style="text-align:right;white-space:nowrap;">
+          <div class="${cls}" style="font-weight:800;">
+            ${sign}₹${Number(t.amount || 0).toLocaleString("en-IN")}
+          </div>
+          <div style="font-size:12px;color:#667085;">
+            ${t.created_at ? new Date(t.created_at).toLocaleString("en-IN") : ""}
+          </div>
+        </div>
       </div>
-      <div style="text-align:right;white-space:nowrap">
-        <div class="${cls}" style="font-weight:900">${sign}${money(t.amount)}</div>
-        <div style="font-size:12px;color:#66756f;margin-top:4px">${esc(t.status||"completed")}</div>
-      </div>
-    </div>`;
+    `;
   }).join("");
 }
 
