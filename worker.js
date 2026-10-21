@@ -985,30 +985,71 @@ async function loadTransactions(){
 }
 
 async function loadReferrals(){
-  const box=$("referralsList");
-  if(!box)return;
+  const box = $("referralsList");
+  if(!box) return;
+
   try{
-    const r=await fetch("/api/referrals");
-    const d=await r.json();
-    if(!d.success){box.innerHTML='<div class="danger">Unable to load referrals.</div>';return;}
-    const items=d.items||[];
-    $("refCount").textContent=items.length;
-    const credited=items.filter(x=>x.status==="credited").reduce((a,x)=>a+Number(x.reward_amount||0),0);
-    $("refEarnings").textContent=money(credited*100);
-    if(!items.length){box.innerHTML='<div class="muted">No referrals yet. Share your referral link to get started.</div>';return;}
-    box.innerHTML=items.map(x=>`
-      <div style="display:flex;justify-content:space-between;gap:12px;padding:13px 0;border-bottom:1px solid rgba(11,61,46,.08)">
-        <div>
-          <div style="font-weight:800">${esc(x.name||"CashGrow Member")}</div>
-          <div style="font-size:12px;color:#66756f">${esc(x.email||"")}</div>
-          <div style="font-size:12px;color:#66756f">${esc(formatDate(x.created_at))}</div>
-        </div>
-        <div style="text-align:right">
-          <div style="font-weight:900">${esc(x.product||"Referral")}</div>
-          <div class="${x.status==="credited"?"success":"muted"}">${x.status==="credited"?money(Number(x.reward_amount||0)*100):esc(x.status||"pending")}</div>
-        </div>
-      </div>`).join("");
-  }catch(e){box.innerHTML='<div class="danger">Unable to load referrals.</div>';}
+    const r = await fetch("/api/referrals");
+    const d = await r.json();
+
+    if(!d.success){
+      box.innerHTML = '<div class="danger">Unable to load referrals.</div>';
+      return;
+    }
+
+    const items = d.items || [];
+
+    $("refCount").textContent = items.length;
+
+    const credited = items.filter(function(x){
+      return x.status === "credited";
+    });
+
+    $("refEarnings").textContent = money(
+      credited.reduce(function(sum,x){
+        return sum + Number(x.amount || 0);
+      },0)
+    );
+
+    if(!items.length){
+      box.innerHTML = '<div class="muted">No referrals yet.</div>';
+      return;
+    }
+
+    box.innerHTML = items.map(function(x){
+      const status = x.status || "pending";
+      const amount = Number(x.amount || 0);
+
+      return (
+        '<div style="display:flex;justify-content:space-between;gap:12px;padding:14px 0;border-bottom:1px solid #eee;">' +
+          '<div>' +
+            '<div style="font-weight:800;">' +
+              String(x.name || x.email || "Referral") +
+            '</div>' +
+            '<div style="font-size:12px;color:#667085;">' +
+              String(x.email || "") +
+            '</div>' +
+            '<div style="font-size:12px;color:#667085;">' +
+              String(x.created_at || "") +
+            '</div>' +
+          '</div>' +
+          '<div style="text-align:right;">' +
+            '<div style="font-weight:900;">₹' +
+              amount.toLocaleString("en-IN") +
+            '</div>' +
+            '<div class="' +
+              (status === "credited" ? "success" : "muted") +
+            '">' +
+              status +
+            '</div>' +
+          '</div>' +
+        '</div>'
+      );
+    }).join("");
+
+  }catch(e){
+    box.innerHTML = '<div class="danger">Unable to load referrals.</div>';
+  }
 }
 
 async function loadWithdrawals(){
