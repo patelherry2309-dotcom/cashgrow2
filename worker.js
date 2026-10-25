@@ -1379,3 +1379,328 @@ async function register(){
     await loadDashboard();
   }catch(e){msg("authMsg","Registration failed.","danger");}
 }
+
+async function forgotPassword(){
+  const email=prompt("Enter your registered email address:");
+  if(!email)return;
+  try{
+    const r=await fetch("/api/forgot-password",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email:email.trim()})});
+    const d=await r.json();
+    alert(d.message||"If an account exists, a reset link has been sent.");
+  }catch(e){alert("Unable to process password reset right now.");}
+}
+
+async function login(){
+  msg("authMsg","Logging in...");
+  try{
+    const r=await fetch("/api/login",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({identifier:$("loginId").value,password:$("loginPass").value})
+    });
+    const d=await r.json();
+    if(!d.success){msg("authMsg",d.message||"Login failed.","danger");return;}
+    msg("authMsg","Login successful.","success");
+    showDashboard(d.user);
+    await loadDashboard();
+  }catch(e){msg("authMsg","Login failed.","danger");}
+}
+
+function setReferralLink(code){
+  const box=$("referralLink");
+  if(box&&code)box.value=location.origin+"/?ref="+encodeURIComponent(code);
+}
+async function copyReferralLink(){
+  const box=$("referralLink");
+  if(!box||!box.value)return;
+  try{
+    await navigator.clipboard.writeText(box.value);
+  }catch(e){
+    box.select();
+    document.execCommand("copy");
+  }
+  msg("dashMsg","Referral link copied successfully.","success");
+}
+function loadReferralFromUrl(){
+  const ref=new URLSearchParams(location.search).get("ref");
+  if(ref&&$("regRef")){
+    $("regRef").value=ref.toUpperCase();
+    showRegister();
+  }
+}
+
+function showDashboard(u){
+  isUserLoggedIn=true;
+  $("account").classList.add("hidden");
+  $("dashboard").classList.remove("hidden");
+  $("welcome").textContent="Welcome, "+(u.name||"CashGrow Member");
+  $("wallet").textContent=money(u.wallet_balance);
+  $("myRef").textContent=u.referral_code||"-";
+  $("profileName").value=u.name||"";
+  $("profilePhone").value=u.phone||"";
+  setReferralLink(u.referral_code);
+}
+
+async function checkLogin(){
+  try{
+    const r=await fetch("/api/me");
+    if(!r.ok){isUserLoggedIn=false;return;}
+    const d=await r.json();
+    if(d.success&&d.loggedIn){
+      showDashboard(d.user);
+      await loadDashboard();
+    }else{
+      isUserLoggedIn=false;
+    }
+  }catch(e){isUserLoggedIn=false;}
+}
+
+async function loadDashboard(){
+  try{
+    const r=await fetch("/api/dashboard");
+    const d=await r.json();
+    if(!d.success)return;
+    $("wallet").textContent=money(d.user.wallet_balance);
+    $("myRef").textContent=d.user.referral_code||"-";
+    $("profileName").value=d.user.name||"";
+    $("profilePhone").value=d.user.phone||"";
+    $("refCount").textContent=Number(d.referrals?.count||0);
+    $("refEarnings").textContent=money(Number(d.referrals?.earnings||0));
+    setReferralLink(d.user.referral_code);
+    renderTransactions(d.transactions||[]);
+    await Promise.all([loadTransactions(),loadPurchases(),loadReferrals(),loadWithdrawals()]);
+  }catch(e){}
+}
+
+async function logout(){
+  try{await fetch("/api/logout",{method:"POST"});}catch(e){}
+  isUserLoggedIn=false;
+  closeQrPay();
+  $("dashboard").classList.add("hidden");
+  $("account").classList.remove("hidden");
+  showLogin();
+  msg("authMsg","Logged out.");
+}
+
+async function saveProfile(){
+  try{
+    const r=await fetch("/api/profile",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({name:$("profileName").value,phone:$("profilePhone").value})
+    });
+    const d=await r.json();
+    msg("dashMsg",d.message||"Done",d.success?"success":"danger");
+    if(d.success)await loadDashboard();
+  }catch(e){msg("dashMsg","Profile update failed.","danger");}
+}
+
+async function requestWithdrawal(){
+  try{
+    const r=await fetch("/api/withdraw",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        amount:$("withdrawAmount").value,
+        method:$("withdrawMethod").value,
+        account_details:$("withdrawDetails").value
+      })
+    });
+    const d=await r.json();
+    msg("dashMsg",d.message||"Done",d.success?"success":"danger");
+    if(d.success){
+      $("withdrawAmount").value="";
+      $("withdrawMethod").value="";
+      $("withdrawDetails").value="";
+      await loadDashboard();
+    }
+  }catch(e){msg("dashMsg","Withdrawal request failed.","danger");}
+}
+
+function renderTransactions(items){
+  const box = $("transactionsList");
+  if(!box) return;
+
+  if(!items || !items.length){
+    box.innerHTML = '<div class="muted">No transactions found.</div>';
+    return;
+  }
+
+  box.innerHTML = items.map(function(t){
+    const sign = t.direction === "credit" ? "+" : "-";
+    const cls = t.direction === "credit" ? "success" : "danger";
+    const labels = {
+      purchase: "Purchase",
+      referral_reward: "Referral Reward",
+      withdrawal: "Withdrawal",
+      withdrawal_refund: "Withdrawal Refund"
+    };
+    const title = labels[t.type] || t.title || t.type || "Transaction";
+
+    return (
+      '<div style="display:flex;justify-content:space-between;align-items:center;padding:14px 0;border-bottom:1px solid #eee;">' +
+        '<div>' +
+          '<div style="font-weight:800;color:#071a33;">' +
+            esc(title) +
+          '</div>' +
+          '<div style="font-size:13px;color:#667085;">' +
+            esc(t.description || "") +
+          '</div>' +
+        '</div>' +
+        '<div style="text-align:right;white-space:nowrap;">' +
+          '<div class="' + cls + '" style="font-weight:800;">' +
+            sign + money(t.amount) +
+          '</div>' +
+          '<div style="font-size:12px;color:#667085;">' +
+            (t.created_at ? new Date(t.created_at + (String(t.created_at).endsWith("Z") ? "" : "Z")).toLocaleString("en-IN") : "") +
+          '</div>' +
+        '</div>' +
+      '</div>'
+    );
+  }).join("");
+}
+async function loadTransactions(){
+  const box=$("transactionsList");
+  if(!box)return;
+  try{
+    const r=await fetch("/api/transactions");
+    const d=await r.json();
+    if(!d.success){box.innerHTML='<div class="danger">Unable to load transactions.</div>';return;}
+    renderTransactions(d.items||[]);
+  }catch(e){
+    box.innerHTML='<div class="danger">Unable to load transactions.</div>';
+  }
+}
+
+async function loadReferrals(){
+  const box = $("referralsList");
+  if(!box) return;
+
+  try{
+    const r = await fetch("/api/referrals");
+    const d = await r.json();
+
+    if(!d.success){
+      box.innerHTML = '<div class="danger">Unable to load referrals.</div>';
+      return;
+    }
+
+    const items = d.items || [];
+
+    $("refCount").textContent = items.length;
+
+    const credited = items.filter(function(x){
+      return x.status === "credited";
+    });
+
+    $("refEarnings").textContent = money(
+      credited.reduce(function(sum,x){
+        return sum + Number(x.reward_amount || 0);
+      },0)
+    );
+
+    if(!items.length){
+      box.innerHTML = '<div class="muted">No referrals yet.</div>';
+      return;
+    }
+
+    box.innerHTML = items.map(function(x){
+      const status = x.status || "pending";
+      const amount = Number(x.reward_amount || 0);
+
+      return (
+        '<div style="display:flex;justify-content:space-between;gap:12px;padding:14px 0;border-bottom:1px solid #eee;">' +
+          '<div>' +
+            '<div style="font-weight:800;">' +
+              String(x.name || x.email || "Referral") +
+            '</div>' +
+            '<div style="font-size:12px;color:#667085;">' +
+              String(x.email || "") +
+            '</div>' +
+            '<div style="font-size:12px;color:#667085;">' +
+              (x.created_at ? new Date(String(x.created_at).endsWith("Z") ? String(x.created_at) : String(x.created_at) + "Z").toLocaleString("en-IN") : "") +
+            '</div>' +
+          '</div>' +
+          '<div style="text-align:right;">' +
+            '<div style="font-weight:900;">' +
+              money(amount) +
+            '</div>' +
+            '<div class="' +
+              (status === "credited" ? "success" : "muted") +
+            '">' +
+              (status === "credited" ? "Credited" : esc(status)) +
+            '</div>' +
+          '</div>' +
+        '</div>'
+      );
+    }).join("");
+
+  }catch(e){
+    box.innerHTML = '<div class="danger">Unable to load referrals.</div>';
+  }
+}
+
+async function loadPurchases(){
+  const box=$("purchasesList");
+  if(!box)return;
+  try{
+    const r=await fetch("/api/purchases");
+    const d=await r.json();
+    if(!d.success){box.innerHTML='<div class="danger">Unable to load purchase history.</div>';return;}
+    const items=d.items||[];
+    if(!items.length){box.innerHTML='<div class="muted">No package payments yet.</div>';return;}
+    box.innerHTML=items.map(function(x){
+      const amount=Number(x.amount||0);
+      const statusLabel=x.status==="captured"?"Verified":x.status==="pending"?"Awaiting admin verification":"Rejected";
+      const statusClass=x.status==="captured"?"success":x.status==="rejected"?"danger":"muted";
+      return '<div style="display:flex;justify-content:space-between;gap:12px;padding:14px 0;border-bottom:1px solid #eee">'
+        + '<div><div style="font-weight:850">'+esc(x.product_name||x.product||"Package")+'</div>'
+        + '<div style="font-size:12px;color:#66756f">'+esc(formatDate(x.created_at))+'</div>'
+        + '<div style="font-size:12px;color:#66756f">Ref / UTR: '+esc((x.razorpay_payment_id||"-").replace("QR_",""))+'</div></div>'
+        + '<div style="text-align:right"><div style="font-weight:900">'+money(amount)+'</div>'
+        + '<div class="'+statusClass+'">'+statusLabel+'</div></div></div>';
+    }).join("");
+  }catch(e){box.innerHTML='<div class="danger">Unable to load purchase history.</div>';}
+}
+async function loadWithdrawals(){
+  const box=$("withdrawalsList");
+  if(!box)return;
+
+  try{
+    const r=await fetch("/api/withdrawals");
+    const d=await r.json();
+
+    if(!d.success){
+      box.innerHTML='<div class="danger">Unable to load withdrawal history.</div>';
+      return;
+    }
+
+    const items=d.items||[];
+
+    if(!items.length){
+      box.innerHTML='<div class="muted">No withdrawal requests yet.</div>';
+      return;
+    }
+
+    box.innerHTML=items.map(function(x){
+      return '<div style="display:flex;justify-content:space-between;gap:12px;padding:13px 0;border-bottom:1px solid #eee">'
+        + '<div>'
+        + '<div style="font-weight:800">' + esc(x.method||"Withdrawal") + '</div>'
+        + '<div style="font-size:12px;color:#66756f">' + esc(formatDate(x.created_at)) + '</div>'
+        + '</div>'
+        + '<div style="text-align:right">'
+        + '<div style="font-weight:900">' + money(x.amount) + '</div>'
+        + '<div style="font-size:12px;color:#66756f">' + esc(x.status||"pending") + '</div>'
+        + '</div>'
+        + '</div>';
+    }).join("");
+
+  }catch(e){
+    box.innerHTML='<div class="danger">Unable to load withdrawal history.</div>';
+  }
+}
+loadReferralFromUrl();
+checkLogin();
+</script>
+</body></html>`;
+}
