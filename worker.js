@@ -1421,9 +1421,11 @@ async function copyReferralLink(){
   }
   msg("dashMsg","Referral link copied successfully.","success");
 }
+let referralLanding = false;
 function loadReferralFromUrl(){
   const ref=new URLSearchParams(location.search).get("ref");
   if(ref&&$("regRef")){
+    referralLanding = true;
     $("regRef").value=ref.toUpperCase();
     showRegister();
   }
@@ -1442,6 +1444,14 @@ function showDashboard(u){
 }
 
 async function checkLogin(){
+  // A referral URL is a registration landing page. Do not restore any existing
+  // browser session here, otherwise the referrer's/account holder's dashboard
+  // can appear instead of the new member registration form.
+  if(referralLanding){
+    isUserLoggedIn=false;
+    showRegister();
+    return;
+  }
   try{
     const r=await fetch("/api/me");
     if(!r.ok){isUserLoggedIn=false;return;}
