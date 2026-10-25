@@ -116,17 +116,27 @@ a{text-decoration:none;color:inherit}
 .faq{border-bottom:1px solid #e1e9e4;padding:17px 0}
 .faq summary{font-weight:850;cursor:pointer;color:var(--cg-green)}
 .account{max-width:620px;margin:25px auto}
+.dashboard{max-width:100%;padding:clamp(16px,3vw,28px)}
+.dashboardHeader{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:8px}
+.dashboardHeader h2{text-align:left;margin:0}
+.dashboardHeader h2:after{margin:11px 0 0}
+.dashboardHeader p{margin:8px 0 0}
+.logoutBtn{width:auto;min-width:110px}
+.dashboardStats,.dashboardCards{grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr))}
+.dashboardStats>* ,.dashboardCards>*{min-width:0}
+.dashboardFeatures{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:10px}
+.dashboardFeatures .refbox{overflow-wrap:anywhere;word-break:normal}
 .tabs{display:flex;gap:8px;margin-bottom:12px}
 .tabs button{flex:1;border:0;padding:11px;border-radius:11px;font-weight:850;background:#e9f1ed;color:var(--cg-green);cursor:pointer}
 .tabs .active{background:linear-gradient(135deg,var(--cg-green2),var(--cg-green))!important;color:#fff}
 .active{background:var(--cg-green)!important;color:#fff}
 .hidden{display:none}
-.wallet{font-size:38px;font-weight:950;text-align:center;color:var(--cg-green)}
+.wallet{font-size:clamp(24px,5vw,38px);font-weight:950;text-align:center;color:var(--cg-green);overflow-wrap:anywhere}
 .refbox{
   background:linear-gradient(135deg,#eff9e9,#fff8df);
   border:1px solid rgba(247,201,72,.35);
   border-radius:16px;padding:18px;text-align:center;
-  font-size:22px;font-weight:950;letter-spacing:2px;color:var(--cg-green)
+  font-size:clamp(16px,4vw,22px);font-weight:950;letter-spacing:clamp(1px,.3vw,2px);color:var(--cg-green);overflow-wrap:anywhere
 }
 .footer{
   background:linear-gradient(145deg,#031d15,#082e21);
@@ -158,4 +168,17 @@ a{text-decoration:none;color:inherit}
   .links{display:none}.hero{padding:58px 16px}.heroLogo{width:180px}
   .hero h1{font-size:40px}.wrap{padding:25px 15px}.section{padding:30px 0}
   .trustbar{grid-template-columns:1fr;margin-top:-14px}
+  .dashboard{padding:18px}
+  .dashboardHeader{align-items:flex-start}
+  .dashboardHeader h2{font-size:26px}
+  .logoutBtn{min-width:88px;padding:11px 12px}
+}
+@media(max-width:560px){
+  .dashboardStats,.dashboardCards{grid-template-columns:minmax(0,1fr)}
+}
+@media(max-width:420px){
+  .dashboard{padding:14px}
+  .dashboardHeader{flex-wrap:wrap}
+  .dashboardFeatures{grid-template-columns:minmax(0,1fr)}
+  .dashboardFeatures .refbox{padding:13px}
 }
